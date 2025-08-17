@@ -191,7 +191,7 @@ namespace test_speaker_stt_translate_tts
                         }
                         else
                         {
-                            AudioAnalysisUtils.SafeDebugLog($"🚫 Отфильтровано как заглушка: {result}");
+                            System.Diagnostics.Debug.WriteLine($"[STT_DEBUG] 🚫 Отфильтровано как заглушка: {result}");
                             StatusUpdated?.Invoke("🚫 Обнаружена аудио заглушка, игнорируем");
                         }
                     }

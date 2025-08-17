@@ -8,6 +8,7 @@ using Newtonsoft.Json.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Diagnostics;
+using System.Linq;
 
 namespace test_speaker_stt_translate_tts
 {
@@ -88,6 +89,16 @@ namespace test_speaker_stt_translate_tts
             
             // Загружаем пользовательские настройки
             LoadUserSettings();
+            
+            // 🧪 ТЕСТ ФИЛЬТРА НЕЗАВЕРШЕННЫХ ФРАЗ
+            IncompletePhrasesTest.RunTest();
+            
+            // 🧪 ДЕМОНСТРАЦИЯ: ЗАГЛАВНЫЕ БУКВЫ
+            CapitalLetterTest.RunCapitalLetterDemo();
+            
+            // 🇪🇺 ТЕСТ ЕВРОПЕЙСКИХ ЯЗЫКОВ
+            EuropeanLanguageTest.RunAllTests();
+            EuropeanLanguageTest.CompareFilters();
             
             // Check Whisper model first
             if (!CheckWhisperModel())
@@ -1704,7 +1715,7 @@ namespace test_speaker_stt_translate_tts
                 }
                 else
                 {
-                    LogMessage("⚠️ Текст не распознан или отфильтрован как заглушка");
+                    DebugLogSpeechValidation("⚠️ Текст не распознан или отфильтрован как заглушка");
                     Invoke(() => {
                         txtRecognizedText.Text = "❌ Текст не распознан";
                         progressBar.Visible = false;
@@ -1769,7 +1780,7 @@ namespace test_speaker_stt_translate_tts
                             }
                             else
                             {
-                                LogMessage($"🚫 Пропущен сегмент-заглушка: '{cleanText}'");
+                                DebugLogSpeechValidation($"🚫 Пропущен сегмент-заглушка: '{cleanText}'");
                             }
                         }
                     }
@@ -1791,29 +1802,30 @@ namespace test_speaker_stt_translate_tts
 
         private bool IsValidSpeech(string text)
         {
-            // 🚀 НОВЫЙ ПРОДВИНУТЫЙ ФИЛЬТР из MORT с подробным логированием
-            LogMessage($"🔍 Проверка валидности речи: '{text}'");
+            // 🚀 НОВЫЙ ПРОДВИНУТЫЙ ФИЛЬТР из MORT с европейской поддержкой и debug логированием
+            DebugLogSpeechValidation($"🔍 Проверка валидности речи: '{text}'");
             
-            bool isQuickValid = AdvancedSpeechFilter.IsValidSpeechQuick(text);
+            // Используем европейский фильтр для более точной проверки
+            bool isEuropeanValid = EuropeanLanguageFilter.IsValidEuropeanSpeech(text);
             bool hasExtremeDuplication = AdvancedSpeechFilter.HasExtremeDuplication(text);
             
-            LogMessage($"📊 Фильтр: QuickValid={isQuickValid}, ExtremeDuplication={hasExtremeDuplication}");
+            DebugLogSpeechValidation($"📊 Фильтр: EuropeanValid={isEuropeanValid}, ExtremeDuplication={hasExtremeDuplication}");
             
-            bool finalResult = isQuickValid && !hasExtremeDuplication;
-            LogMessage($"✅ Итоговый результат валидации: {finalResult}");
+            bool finalResult = isEuropeanValid && !hasExtremeDuplication;
+            DebugLogSpeechValidation($"✅ Итоговый результат валидации: {finalResult}");
             
             return finalResult;
         }
 
         private bool IsPlaceholderToken(string text)
         {
-            // 🚀 Используем продвинутый фильтр вместо собственной логики с логированием
-            LogMessage($"🔍 Проверка на заглушку: '{text}'");
+            // 🚀 Используем продвинутый европейский фильтр с debug логированием
+            DebugLogSpeechValidation($"🔍 Проверка на заглушку: '{text}'");
             
-            bool isValid = AdvancedSpeechFilter.IsValidSpeechQuick(text);
+            bool isValid = EuropeanLanguageFilter.IsValidEuropeanSpeech(text);
             bool isPlaceholder = !isValid;
             
-            LogMessage($"📊 Заглушка: IsValid={isValid}, IsPlaceholder={isPlaceholder}");
+            DebugLogSpeechValidation($"📊 Заглушка: IsValid={isValid}, IsPlaceholder={isPlaceholder}");
             
             return isPlaceholder;
         }
@@ -1924,7 +1936,9 @@ namespace test_speaker_stt_translate_tts
                     
                     if (!string.IsNullOrEmpty(translatedText))
                     {
-                        LogMessage($"✅ Переведено: '{translatedText}'");
+                        // Анализируем качество перевода
+                        string qualityInfo = AnalyzeTranslationQuality(text, translatedText);
+                        LogMessage($"✅ Переведено{qualityInfo}: '{translatedText}'");
                         
                         Invoke(() => {
                             txtTranslatedText.Text = translatedText;
@@ -2058,22 +2072,36 @@ namespace test_speaker_stt_translate_tts
             {
                 if (googleTranslateClient == null) return string.Empty;
                 
-                // 📚 УМНАЯ РАЗБИВКА для длинных текстов (адаптировано из MORT)
-                if (text.Length > 300) // Порог для использования умной разбивки
+                // 📚 УМНАЯ РАЗБИВКА НА ПРЕДЛОЖЕНИЯ (адаптировано из MORT)
+                // ⚠️ ВАЖНО: Whisper.NET расставляет знаки препинания в конце предложений
+                // Предложения - это неделимые смысловые единицы, их нельзя разрывать при переводе
+                
+                // Подсчитываем предложения по знакам препинания от Whisper
+                var sentenceEndings = new char[] { '.', '!', '?' };
+                int sentenceCount = text.Split(sentenceEndings, StringSplitOptions.RemoveEmptyEntries).Length;
+                
+                // Используем разбивку только для:
+                // 1. Длинных текстов (>500 символов) 
+                // 2. Содержащих 3+ полных предложения
+                // 3. Это обеспечивает сохранение контекста внутри предложений
+                bool shouldUseSplitting = text.Length > 500 && sentenceCount >= 3;
+                
+                if (shouldUseSplitting)
                 {
-                    LogMessage($"📖 Длинный текст ({text.Length} символов), используем умную разбивку из MORT");
+                    LogMessage($"📖 Длинный многопредложенческий текст ({text.Length} символов, {sentenceCount} предложений) - разбиваем на смысловые группы");
                     
-                    // Создаем функцию для перевода отдельных частей
-                    Func<string, string, string, Task<string>> translateFunction = async (textPart, srcLang, tgtLang) =>
+                    // Создаем функцию для перевода групп предложений
+                    Func<string, string, string, Task<string>> translateFunction = async (sentenceGroup, srcLang, tgtLang) =>
                     {
-                        return await TranslateSingleTextPart(textPart, srcLang, tgtLang);
+                        return await TranslateSingleTextPart(sentenceGroup, srcLang, tgtLang);
                     };
                     
-                    // Используем SmartTextSplitter для разбивки и перевода по частям
+                    // Используем SmartTextSplitter для группировки полных предложений
                     return await SmartTextSplitter.TranslateLongTextInParts(text, translateFunction, sourceLang, targetLang);
                 }
                 
-                // Обычный перевод для коротких текстов
+                // Обычный перевод для коротких текстов и одиночных предложений
+                LogMessage($"📝 Обычный перевод: {text.Length} символов");
                 return await TranslateSingleTextPart(text, sourceLang, targetLang);
             }
             catch (Exception ex)
@@ -2212,8 +2240,11 @@ namespace test_speaker_stt_translate_tts
                 {
                     LogMessage("⚠️ TTS уже выполняется, отменяем предыдущую операцию...");
                     speechSynthesizer.SpeakAsyncCancelAll();
-                    await Task.Delay(200); // Увеличим время ожидания
+                    await Task.Delay(300); // Увеличенное время ожидания для стабильности
                 }
+                
+                // Дополнительная пауза для предотвращения конфликтов
+                await Task.Delay(50);
                 
                 isTTSActive = true; // Устанавливаем флаг активности
                 LogMessage($"🔊 Озвучивание: '{text}'");
@@ -2606,12 +2637,59 @@ namespace test_speaker_stt_translate_tts
 
         #endregion
 
+        /// <summary>
+        /// Логирование для отладки валидации речи (только в Debug режиме)
+        /// </summary>
+        private void DebugLogSpeechValidation(string message)
+        {
+            System.Diagnostics.Debug.WriteLine($"[SPEECH_DEBUG] {message}");
+        }
+
         private class AudioDevice
         {
             public string Name { get; set; } = string.Empty;
             public MMDevice Device { get; set; } = null!;
             
             public override string ToString() => Name;
+        }
+
+        /// <summary>
+        /// Анализирует качество перевода и возвращает информацию о нем
+        /// </summary>
+        private string AnalyzeTranslationQuality(string original, string translated)
+        {
+            try
+            {
+                var indicators = new List<string>();
+                
+                // Проверяем соответствие длины
+                double lengthRatio = (double)translated.Length / original.Length;
+                if (lengthRatio > 1.5) indicators.Add("📏+");  // Заметно длиннее
+                else if (lengthRatio < 0.5) indicators.Add("📏-");  // Заметно короче
+                
+                // Проверяем сохранение знаков препинания
+                int originalPunct = original.Count(c => char.IsPunctuation(c));
+                int translatedPunct = translated.Count(c => char.IsPunctuation(c));
+                if (Math.Abs(originalPunct - translatedPunct) > 2) indicators.Add("❓");
+                
+                // Проверяем на потенциальные проблемы в переводе
+                if (translated.Contains("...") && !original.Contains("...")) indicators.Add("🔍");
+                if (translated.Contains("[") || translated.Contains("]")) indicators.Add("⚠️");
+                
+                // Определяем тип перевода по языку
+                bool isRussianSource = System.Text.RegularExpressions.Regex.IsMatch(original, @"[а-яё]", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                bool isEnglishSource = System.Text.RegularExpressions.Regex.IsMatch(original, @"[a-z]", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                
+                if (isRussianSource && original == translated) indicators.Add("🔄RU→RU");
+                else if (isEnglishSource) indicators.Add("🔄EN→RU");
+                else if (isRussianSource) indicators.Add("🔄RU→?");
+                
+                return indicators.Count > 0 ? $" ({string.Join("", indicators)})" : "";
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         #endregion

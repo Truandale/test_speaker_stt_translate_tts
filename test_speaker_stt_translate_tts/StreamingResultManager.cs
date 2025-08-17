@@ -140,7 +140,7 @@ namespace test_speaker_stt_translate_tts
                 // Фильтруем заглушки
                 if (AudioAnalysisUtils.IsAudioPlaceholder(result.TranslatedText))
                 {
-                    AudioAnalysisUtils.SafeDebugLog($"🚫 TTS отфильтрован для чанка #{chunkNumber}: заглушка");
+                    System.Diagnostics.Debug.WriteLine($"[TTS_DEBUG] 🚫 TTS отфильтрован для чанка #{chunkNumber}: заглушка");
                     return;
                 }
                 

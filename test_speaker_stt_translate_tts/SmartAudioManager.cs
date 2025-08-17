@@ -14,7 +14,7 @@ namespace test_speaker_stt_translate_tts
     {
         // 📚 КОНСТАНТЫ ДЛЯ РЕЖИМА АУДИОКНИГИ
         private const int MAX_QUEUE_SIZE = 200;           // Максимальный размер очереди для аудиокниг
-        private const int AUDIOBOOK_MERGE_SIZE = 150;     // Порог объединения сегментов
+        private const int AUDIOBOOK_MERGE_SIZE = 100;     // Порог объединения сегментов (уменьшен для более частой обработки)
         
         // Состояния
         private bool isTTSActive = false;
@@ -93,7 +93,7 @@ namespace test_speaker_stt_translate_tts
         {
             // 🎧 РЕЖИМ АУДИОКНИГИ: накапливаем без потерь вместо удаления
             const int MAX_QUEUE_SIZE = 200; // Увеличили лимит для аудиокниг
-            const int AUDIOBOOK_MERGE_SIZE = 150; // Объединяем сегменты при этом размере
+            const int AUDIOBOOK_MERGE_SIZE = 100; // Объединяем сегменты при этом размере (уменьшен)
             
             if (audioQueue.Count >= MAX_QUEUE_SIZE)
             {
@@ -103,7 +103,7 @@ namespace test_speaker_stt_translate_tts
                 var mergedSegments = MergeSmallSegments();
                 SafeLog($"✅ Объединено в {mergedSegments} крупных блоков без потери данных");
             }
-            else if (audioQueue.Count >= AUDIOBOOK_MERGE_SIZE)
+            else if (audioQueue.Count >= AUDIOBOOK_MERGE_SIZE) // 100 сегментов
             {
                 // Превентивное объединение для оптимизации
                 _ = Task.Run(() => MergeSmallSegments());

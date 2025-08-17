@@ -86,22 +86,25 @@ namespace test_speaker_stt_translate_tts
         }
 
         /// <summary>
-        /// Умное разбиение с учетом контекста
+        /// Умное разбиение с учетом контекста и особенностей Whisper.NET
         /// </summary>
         private static List<string> SplitWithContextAwareness(string text)
         {
             var sentences = new List<string>();
             var currentSentence = new StringBuilder();
 
+            // Whisper.NET расставляет знаки препинания в конце предложений
+            // Мы должны доверять этим знакам и не разрывать предложения
             for (int i = 0; i < text.Length; i++)
             {
                 char c = text[i];
                 currentSentence.Append(c);
 
-                // Проверяем на конец предложения
+                // Проверяем на конец предложения (знаки от Whisper надежны)
                 if (SENTENCE_ENDINGS.Contains(c))
                 {
-                    if (IsActualSentenceEnd(text, i, currentSentence.ToString()))
+                    // Whisper.NET знает где заканчиваются предложения - доверяем ему
+                    if (IsValidWhisperSentenceEnd(text, i, currentSentence.ToString()))
                     {
                         string sentence = currentSentence.ToString().Trim();
                         if (sentence.Length >= MIN_SENTENCE_LENGTH)
@@ -113,7 +116,7 @@ namespace test_speaker_stt_translate_tts
                 }
             }
 
-            // Добавляем последнее предложение
+            // Добавляем последнее предложение, если есть
             if (currentSentence.Length > 0)
             {
                 string lastSentence = currentSentence.ToString().Trim();
@@ -127,7 +130,75 @@ namespace test_speaker_stt_translate_tts
         }
 
         /// <summary>
-        /// Проверяет, является ли точка реальным концом предложения
+        /// Проверяет, является ли знак препинания действительным концом предложения от Whisper
+        /// </summary>
+        private static bool IsValidWhisperSentenceEnd(string text, int position, string currentSentence)
+        {
+            char currentChar = text[position];
+            
+            // Whisper ставит точку, вопросительный и восклицательный знаки в конце предложений
+            // Мы доверяем этому, но проверяем очевидные исключения
+            
+            // Проверяем на очевидные сокращения (более строго)
+            if (currentChar == '.' && IsCommonAbbreviation(currentSentence))
+                return false;
+
+            // Проверяем следующий символ после знака препинания
+            if (position + 1 < text.Length)
+            {
+                char nextChar = text[position + 1];
+                
+                // После конца предложения обычно идет пробел и заглавная буква
+                // или конец текста
+                if (char.IsWhiteSpace(nextChar))
+                {
+                    // Ищем следующий не-пробельный символ
+                    for (int j = position + 1; j < text.Length; j++)
+                    {
+                        if (!char.IsWhiteSpace(text[j]))
+                        {
+                            // Если следующее слово начинается с заглавной буквы - это новое предложение
+                            return char.IsUpper(text[j]) || char.IsDigit(text[j]);
+                        }
+                    }
+                    // Если после пробелов ничего нет - это конец текста
+                    return true;
+                }
+                
+                // Если сразу после знака идет заглавная буква
+                return char.IsUpper(nextChar);
+            }
+            
+            // Если это конец текста - определенно конец предложения
+            return true;
+        }
+
+        /// <summary>
+        /// Проверяет на распространенные сокращения
+        /// </summary>
+        private static bool IsCommonAbbreviation(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+            
+            // Ищем последнее слово перед точкой
+            var words = text.Trim().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length == 0) return false;
+            
+            string lastWord = words[words.Length - 1].TrimEnd('.');
+            
+            // Список распространенных сокращений
+            var commonAbbreviations = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "mr", "mrs", "ms", "dr", "prof", "inc", "ltd", "corp", "co",
+                "etc", "vs", "ie", "eg", "cf", "et", "al", "ca", "approx",
+                "г", "гр", "тов", "им", "ул", "д", "кв", "стр", "корп"
+            };
+            
+            return commonAbbreviations.Contains(lastWord);
+        }
+
+        /// <summary>
+        /// Проверяет, является ли точка реальным концом предложения (старый метод для совместимости)
         /// </summary>
         private static bool IsActualSentenceEnd(string text, int position, string currentSentence)
         {
@@ -380,37 +451,48 @@ namespace test_speaker_stt_translate_tts
 
                 AudioAnalysisUtils.SafeDebugLog($"📝 [SmartSplitter] Получилось {sentences.Count} предложений для перевода");
 
-                if (sentences.Count <= 1)
+                // 🎯 УЛУЧШЕНИЕ: если предложений мало (2-3), переводим целиком для сохранения контекста
+                if (sentences.Count <= 3 && longText.Length < 800)
                 {
-                    // Если разбивка не дала результата, используем обычный перевод
-                    AudioAnalysisUtils.SafeDebugLog($"📝 [SmartSplitter] Используем обычный перевод для текста: {longText.Length} символов");
+                    AudioAnalysisUtils.SafeDebugLog($"📝 [SmartSplitter] Мало предложений ({sentences.Count}), переводим целиком для максимального сохранения контекста");
                     return await translateFunction(longText, sourceLanguage, targetLanguage);
                 }
 
+                if (sentences.Count <= 1)
+                {
+                    // Если разбивка не дала результата, используем обычный перевод
+                    AudioAnalysisUtils.SafeDebugLog($"📝 [SmartSplitter] Одно предложение или неудачная разбивка, обычный перевод: {longText.Length} символов");
+                    return await translateFunction(longText, sourceLanguage, targetLanguage);
+                }
+
+                // 🔗 УЛУЧШЕНИЕ: группируем полные предложения для сохранения контекста
+                var contextualGroups = GroupSentencesForContext(sentences);
+                AudioAnalysisUtils.SafeDebugLog($"📝 [SmartSplitter] Сгруппировано в {contextualGroups.Count} групп полных предложений");
+
                 var translatedParts = new List<string>();
 
-                // Переводим каждое предложение отдельно
-                for (int i = 0; i < sentences.Count; i++)
+                // Переводим каждую контекстную группу отдельно
+                for (int i = 0; i < contextualGroups.Count; i++)
                 {
-                    string sentence = sentences[i];
-                    string preview = sentence.Length > 50 ? sentence.Substring(0, 47) + "..." : sentence;
+                    string group = contextualGroups[i];
+                    string preview = group.Length > 80 ? group.Substring(0, 77) + "..." : group;
 
-                    AudioAnalysisUtils.SafeDebugLog($"🔄 [SmartSplitter] Переводим часть {i + 1}/{sentences.Count}: '{preview}'");
+                    AudioAnalysisUtils.SafeDebugLog($"🔄 [SmartSplitter] Переводим группу {i + 1}/{contextualGroups.Count}: '{preview}'");
 
                     try
                     {
-                        string partResult = await translateFunction(sentence, sourceLanguage, targetLanguage);
+                        string partResult = await translateFunction(group, sourceLanguage, targetLanguage);
                         
                         if (!string.IsNullOrEmpty(partResult) && !partResult.Contains("[Ошибка]"))
                         {
                             translatedParts.Add(partResult.Trim());
-                            string resultPreview = partResult.Length > 50 ? partResult.Substring(0, 47) + "..." : partResult;
-                            AudioAnalysisUtils.SafeDebugLog($"✅ [SmartSplitter] Часть {i + 1} переведена: '{resultPreview}'");
+                            string resultPreview = partResult.Length > 80 ? partResult.Substring(0, 77) + "..." : partResult;
+                            AudioAnalysisUtils.SafeDebugLog($"✅ [SmartSplitter] Группа {i + 1} переведена: '{resultPreview}'");
                         }
                         else
                         {
-                            AudioAnalysisUtils.SafeDebugLog($"❌ [SmartSplitter] Часть {i + 1} не переведена, используем оригинал");
-                            translatedParts.Add(sentence); // Добавляем оригинал если перевод не удался
+                            AudioAnalysisUtils.SafeDebugLog($"❌ [SmartSplitter] Группа {i + 1} не переведена, используем оригинал");
+                            translatedParts.Add(group); // Добавляем оригинал если перевод не удался
                         }
 
                         // Небольшая задержка между запросами к API для предотвращения rate limiting
@@ -418,8 +500,8 @@ namespace test_speaker_stt_translate_tts
                     }
                     catch (Exception partEx)
                     {
-                        AudioAnalysisUtils.SafeDebugLog($"❌ [SmartSplitter] Ошибка перевода части {i + 1}: {partEx.Message}");
-                        translatedParts.Add(sentence); // Добавляем оригинал при ошибке
+                        AudioAnalysisUtils.SafeDebugLog($"❌ [SmartSplitter] Ошибка перевода группы {i + 1}: {partEx.Message}");
+                        translatedParts.Add(group); // Добавляем оригинал при ошибке
                     }
                 }
 
@@ -436,6 +518,57 @@ namespace test_speaker_stt_translate_tts
                 AudioAnalysisUtils.SafeDebugLog($"❌ [SmartSplitter] Критическая ошибка перевода длинного текста: {ex.Message}");
                 return $"[Ошибка перевода длинного текста] {longText}";
             }
+        }
+
+        /// <summary>
+        /// Группирует предложения для сохранения контекста при переводе
+        /// </summary>
+        private static List<string> GroupSentencesForContext(List<string> sentences)
+        {
+            var groups = new List<string>();
+            var currentGroup = new List<string>();
+            int currentLength = 0;
+            
+            foreach (var sentence in sentences)
+            {
+                var trimmedSentence = sentence.Trim();
+                if (string.IsNullOrEmpty(trimmedSentence)) continue;
+                
+                // Если добавление этого предложения превысит лимит в 800 символов
+                // или текущая группа уже содержит 3 предложения
+                if ((currentLength + trimmedSentence.Length > 800 && currentGroup.Count > 0) 
+                    || currentGroup.Count >= 3)
+                {
+                    // Завершаем текущую группу
+                    if (currentGroup.Count > 0)
+                    {
+                        groups.Add(string.Join(" ", currentGroup));
+                        currentGroup.Clear();
+                        currentLength = 0;
+                    }
+                }
+                
+                // Добавляем предложение в текущую группу
+                currentGroup.Add(trimmedSentence);
+                currentLength += trimmedSentence.Length + 1; // +1 для пробела
+            }
+            
+            // Добавляем последнюю группу, если она не пуста
+            if (currentGroup.Count > 0)
+            {
+                groups.Add(string.Join(" ", currentGroup));
+            }
+            
+            AudioAnalysisUtils.SafeDebugLog($"📝 [SmartSplitter] Группировка: {sentences.Count} предложений → {groups.Count} групп предложений");
+            
+            // Подробная информация о группах для отладки
+            for (int i = 0; i < groups.Count; i++)
+            {
+                string groupPreview = groups[i].Length > 60 ? groups[i].Substring(0, 57) + "..." : groups[i];
+                AudioAnalysisUtils.SafeDebugLog($"  📋 Группа {i + 1}: {groups[i].Length} символов - '{groupPreview}'");
+            }
+            
+            return groups;
         }
     }
 }

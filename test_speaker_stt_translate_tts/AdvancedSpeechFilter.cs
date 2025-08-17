@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
+using System.Diagnostics;
 
 namespace test_speaker_stt_translate_tts
 {
@@ -18,6 +19,14 @@ namespace test_speaker_stt_translate_tts
         private const float MAX_DYNAMIC_RANGE = 15.0f;
         private const float MIN_CHANGE_RATE = 0.05f;
         private const float MAX_CHANGE_RATE = 0.9f;
+
+        /// <summary>
+        /// Debug логирование для фильтра речи
+        /// </summary>
+        private static void DebugLogFilter(string message)
+        {
+            Debug.WriteLine($"[SPEECH_FILTER_DEBUG] {message}");
+        }
 
         /// <summary>
         /// Строгие технические токены Whisper - всегда фильтруются
@@ -59,21 +68,21 @@ namespace test_speaker_stt_translate_tts
             // Уровень 1: Фильтрация строгих технических токенов
             if (IsStrictTechnicalToken(lowerText))
             {
-                AudioAnalysisUtils.SafeDebugLog($"🚫 [L1] Строгий технический токен: '{text}'");
+                DebugLogFilter($"🚫 [L1] Строгий технический токен: '{text}'");
                 return false;
             }
 
             // Уровень 2: Фильтрация служебных сообщений
             if (IsSystemMessage(lowerText))
             {
-                AudioAnalysisUtils.SafeDebugLog($"🚫 [L2] Служебное сообщение: '{text}'");
+                DebugLogFilter($"🚫 [L2] Служебное сообщение: '{text}'");
                 return false;
             }
 
             // Уровень 3: Базовые проверки текста
             if (!PassesBasicValidation(cleanText))
             {
-                AudioAnalysisUtils.SafeDebugLog($"🚫 [L3] Базовая валидация: '{text}'");
+                DebugLogFilter($"🚫 [L3] Базовая валидация: '{text}'");
                 return false;
             }
 
@@ -83,7 +92,7 @@ namespace test_speaker_stt_translate_tts
                 float speechLikelihood = AnalyzeSpeechCharacteristics(audioSamples);
                 if (speechLikelihood < MIN_SPEECH_LIKELIHOOD)
                 {
-                    AudioAnalysisUtils.SafeDebugLog($"🚫 [L4] Аудио анализ: speechLikelihood={speechLikelihood:F3} < {MIN_SPEECH_LIKELIHOOD}");
+                    DebugLogFilter($"🚫 [L4] Аудио анализ: speechLikelihood={speechLikelihood:F3} < {MIN_SPEECH_LIKELIHOOD}");
                     return false;
                 }
             }
@@ -91,18 +100,26 @@ namespace test_speaker_stt_translate_tts
             // Уровень 5: Проверка на реальные слова
             if (!HasRealWords(lowerText))
             {
-                AudioAnalysisUtils.SafeDebugLog($"🚫 [L5] Нет реальных слов: '{text}'");
+                DebugLogFilter($"🚫 [L5] Нет реальных слов: '{text}'");
                 return false;
             }
 
             // Уровень 6: Проверка на чисто эмоциональные маркеры
             if (IsOnlyEmotionalMarkers(cleanText))
             {
-                AudioAnalysisUtils.SafeDebugLog($"🚫 [L6] Только эмоциональные маркеры: '{text}'");
+                DebugLogFilter($"🚫 [L6] Только эмоциональные маркеры: '{text}'");
                 return false;
             }
 
-            AudioAnalysisUtils.SafeDebugLog($"✅ Принят как человеческая речь: '{text}'");
+            // Уровень 7: Проверка на завершенность предложений (русская пунктуация)
+            // Отфильтровываем обрезанные фразы без знаков завершения
+            if (IsIncompletePhrase(cleanText))
+            {
+                DebugLogFilter($"🚫 [L7] Незавершенная фраза без знаков конца предложения: '{text}'");
+                return false;
+            }
+
+            DebugLogFilter($"✅ Принят как человеческая речь: '{text}'");
             return true;
         }
 
@@ -266,7 +283,7 @@ namespace test_speaker_stt_translate_tts
             var mostRepeated = wordGroups.Where(kv => kv.Value >= minRepeats).FirstOrDefault();
             if (mostRepeated.Value >= minRepeats)
             {
-                AudioAnalysisUtils.SafeDebugLog($"🚫 Экстремальный повтор: '{mostRepeated.Key}' x{mostRepeated.Value}");
+                DebugLogFilter($"🚫 Экстремальный повтор: '{mostRepeated.Key}' x{mostRepeated.Value}");
                 return true;
             }
 
@@ -315,6 +332,153 @@ namespace test_speaker_stt_translate_tts
 
             var cleanedText = CleanEmotionalMarkers(text);
             return string.IsNullOrWhiteSpace(cleanedText);
+        }
+
+        /// <summary>
+        /// Проверяет, является ли фраза незавершенной (без знаков конца предложения)
+        /// В русском языке знаки конца предложения: . ? ! … и их сочетания
+        /// ВАЖНО: Предложения также должны начинаться с заглавной буквы
+        /// </summary>
+        public static bool IsIncompletePhrase(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return true;
+
+            var trimmedText = text.Trim();
+            
+            // Слишком короткие фразы считаем незавершенными
+            if (trimmedText.Length <= 2) return true;
+            
+            // Знаки конца предложения в русском языке
+            var sentenceEndMarkers = new char[] { '.', '?', '!', '…' };
+            
+            // Сочетания знаков препинания: ?!, !?, ?.., !.., ?!.. и т.п.
+            var sentenceEndPatterns = new string[] { "?!", "!?", "?..", "!..", "?!..", "!?..", "...", "…" };
+            
+            // 1. ПРОВЕРКА НАЧАЛА: должно начинаться с заглавной буквы
+            if (!StartsWithCapitalLetter(trimmedText))
+            {
+                DebugLogFilter($"🔍 Фраза не начинается с заглавной буквы: '{text}'");
+                return true; // Незавершенная фраза
+            }
+            
+            // 2. ПРОВЕРКА КОНЦА: должно заканчиваться знаками завершения
+            
+            // Проверяем, оканчивается ли на знак конца предложения
+            char lastChar = trimmedText[trimmedText.Length - 1];
+            if (sentenceEndMarkers.Contains(lastChar))
+            {
+                return false; // Завершенное предложение
+            }
+            
+            // Проверяем сочетания знаков в конце
+            foreach (var pattern in sentenceEndPatterns)
+            {
+                if (trimmedText.EndsWith(pattern))
+                {
+                    return false; // Завершенное предложение
+                }
+            }
+            
+            // 3. ОСОБЫЕ СЛУЧАИ:
+            
+            // Фразы начинающиеся с "..." - это продолжения (всегда незавершенные)
+            if (trimmedText.StartsWith("...") || trimmedText.StartsWith("…"))
+            {
+                DebugLogFilter($"🔍 Фрагмент начинающийся с многоточия: '{text}'");
+                return true; // Считаем незавершенным фрагментом
+            }
+            
+            // Фразы только с многоточием в конце без других знаков - подозрительны
+            if (trimmedText.EndsWith("...") || trimmedText.EndsWith("…"))
+            {
+                // Проверяем, есть ли еще знаки препинания внутри
+                bool hasInternalPunctuation = trimmedText.Substring(0, trimmedText.Length - 3)
+                    .Any(c => sentenceEndMarkers.Contains(c) || c == ',' || c == ';' || c == ':');
+                    
+                if (!hasInternalPunctuation)
+                {
+                    DebugLogFilter($"🔍 Фраза только с многоточием в конце: '{text}'");
+                    return true; // Вероятно незавершенная
+                }
+            }
+            
+            // Если нет знаков завершения - незавершенная фраза
+            DebugLogFilter($"🔍 Фраза без знаков завершения: '{text}'");
+            return true;
+        }
+
+        /// <summary>
+        /// Проверяет, начинается ли текст с заглавной буквы (с учетом русских правил)
+        /// </summary>
+        private static bool StartsWithCapitalLetter(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return false;
+            
+            // Пропускаем начальные знаки препинания: кавычки, скобки, тире
+            int startIndex = 0;
+            while (startIndex < text.Length)
+            {
+                char ch = text[startIndex];
+                
+                // Пропускаем: « » " " ' ' ( ) [ ] { } — – - 
+                if (ch == '«' || ch == '»' || ch == '"' || ch == '\'' || 
+                    ch == '(' || ch == ')' || ch == '[' || ch == ']' ||
+                    ch == '{' || ch == '}' || ch == '—' || ch == '–' || ch == '-' ||
+                    ch == ' ' || ch == '\t')
+                {
+                    startIndex++;
+                    continue;
+                }
+                
+                // Особый случай: многоточие в начале не влияет на правило заглавной
+                if ((ch == '.' && startIndex + 2 < text.Length && 
+                     text[startIndex + 1] == '.' && text[startIndex + 2] == '.') ||
+                    ch == '…')
+                {
+                    // Пропускаем многоточие и идем дальше
+                    startIndex += (ch == '…') ? 1 : 3;
+                    continue;
+                }
+                
+                // Нашли первую букву/символ
+                break;
+            }
+            
+            if (startIndex >= text.Length) return false;
+            
+            char firstLetter = text[startIndex];
+            
+            // Проверяем, является ли заглавной буквой
+            bool isCapital = char.IsUpper(firstLetter);
+            
+            // Особые случаи для брендов и технических названий
+            if (!isCapital)
+            {
+                // Разрешаем некоторые технические исключения в начале:
+                // - цифры (например, "5 минут назад")
+                // - специальные символы (например, "$100", "@user")
+                if (char.IsDigit(firstLetter) || 
+                    firstLetter == '$' || firstLetter == '@' || firstLetter == '#')
+                {
+                    DebugLogFilter($"🔍 Допущено начало с цифры/символа: '{firstLetter}'");
+                    return true;
+                }
+                
+                // Проверяем известные бренды, которые могут писаться с маленькой буквы
+                string restOfText = text.Substring(startIndex).ToLower();
+                string[] allowedLowercaseBrands = { "iphone", "ipad", "ebay", "macbook", "ios", "android" };
+                
+                foreach (var brand in allowedLowercaseBrands)
+                {
+                    if (restOfText.StartsWith(brand))
+                    {
+                        DebugLogFilter($"🔍 Допущен бренд с маленькой буквы: '{brand}'");
+                        return true; // Разрешаем бренды
+                    }
+                }
+            }
+            
+            return isCapital;
         }
     }
 }

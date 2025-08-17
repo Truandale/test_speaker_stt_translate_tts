@@ -106,7 +106,7 @@ namespace test_speaker_stt_translate_tts
                 // Фильтруем заглушки
                 if (AudioAnalysisUtils.IsAudioPlaceholder(text))
                 {
-                    AudioAnalysisUtils.SafeDebugLog($"🚫 Отфильтровано TTS заглушка: {text}");
+                    System.Diagnostics.Debug.WriteLine($"[TTS_DEBUG] 🚫 Отфильтровано TTS заглушка: {text}");
                     return false;
                 }
 
