@@ -22,6 +22,13 @@ namespace test_speaker_stt_translate_tts
         private bool isCapturing = false;
         private bool isCollectingAudio = false;
         private int audioLogCount = 0; // Для отладки перезапуска
+        
+        // Семафоры для последовательной обработки
+        private readonly SemaphoreSlim audioProcessingSemaphore = new(1, 1);
+        private int audioSequenceNumber = 0;
+        private readonly SemaphoreSlim ttsProcessingSemaphore = new(1, 1);
+        private int ttsSequenceNumber = 0;
+        
         private volatile bool isTTSActive = false; // Для отслеживания активных TTS операций
         private DateTime lastVoiceActivity = DateTime.Now;
         private DateTime recordingStartTime = DateTime.Now;
@@ -247,8 +254,8 @@ namespace test_speaker_stt_translate_tts
             {
                 LogMessage($"🔄 Обработка аудио сегмента из очереди: {segment.AudioData.Length} байт (источник: {segment.Source})");
                 
-                // Конвертируем и обрабатываем аудио
-                await ProcessAudioDataInternal(segment.AudioData);
+                // Конвертируем и обрабатываем аудио ПОСЛЕДОВАТЕЛЬНО
+                await ProcessAudioSequentially(segment.AudioData);
                 
                 LogMessage($"✅ Сегмент из очереди обработан успешно");
                 
@@ -1187,7 +1194,7 @@ namespace test_speaker_stt_translate_tts
             }
         }
 
-        private async void OnAudioDataAvailable(object? sender, WaveInEventArgs e)
+        private void OnAudioDataAvailable(object? sender, WaveInEventArgs e)
         {
             // Проверяем, что форма не была освобождена
             if (IsDisposed || !IsHandleCreated || isDisposed)
@@ -1280,7 +1287,7 @@ namespace test_speaker_stt_translate_tts
                                 txtRecognizedText.Text = "🔄 Обрабатываю аудио с динамиков...";
                             });
                             
-                            await ProcessAudioDataInternal(audioBuffer.ToArray());
+                            _ = Task.Run(() => ProcessAudioSequentially(audioBuffer.ToArray()));
                         }
                         else
                         {
@@ -1310,7 +1317,7 @@ namespace test_speaker_stt_translate_tts
                                 txtRecognizedText.Text = "🔄 Обрабатываю аудио с динамиков...";
                             });
                             
-                            await ProcessAudioDataInternal(audioBuffer.ToArray());
+                            _ = Task.Run(() => ProcessAudioSequentially(audioBuffer.ToArray()));
                         }
                         else
                         {
@@ -1411,7 +1418,7 @@ namespace test_speaker_stt_translate_tts
                         });
                         
                         byte[] recordedAudio = audioBuffer.ToArray();
-                        _ = Task.Run(() => ProcessAudioDataInternal(recordedAudio));
+                        _ = Task.Run(() => ProcessAudioSequentially(recordedAudio));
                     }
                     
                     Invoke(() => {
@@ -1445,7 +1452,7 @@ namespace test_speaker_stt_translate_tts
                         });
                         
                         byte[] timeoutAudio = audioBuffer.ToArray();
-                        _ = Task.Run(() => ProcessAudioDataInternal(timeoutAudio));
+                        _ = Task.Run(() => ProcessAudioSequentially(timeoutAudio));
                     }
                     
                     Invoke(() => {
@@ -1470,7 +1477,7 @@ namespace test_speaker_stt_translate_tts
                         
                         // Process collected audio in background
                         var audioDataCopy = audioBuffer.ToArray();
-                        Task.Run(() => ProcessAudioDataInternal(audioDataCopy));
+                        Task.Run(() => ProcessAudioSequentially(audioDataCopy));
                     }
                     
                     audioBuffer.Clear();
@@ -1547,7 +1554,7 @@ namespace test_speaker_stt_translate_tts
                             });
                             
                             byte[] timeoutAudio = audioBuffer.ToArray();
-                            _ = Task.Run(() => ProcessAudioDataInternal(timeoutAudio));
+                            _ = Task.Run(() => ProcessAudioSequentially(timeoutAudio));
                         }
                         
                         Invoke(() => {
@@ -1571,7 +1578,7 @@ namespace test_speaker_stt_translate_tts
                             });
                             
                             byte[] silenceAudio = audioBuffer.ToArray();
-                            _ = Task.Run(() => ProcessAudioDataInternal(silenceAudio));
+                            _ = Task.Run(() => ProcessAudioSequentially(silenceAudio));
                         }
                         
                         Invoke(() => {
@@ -1670,7 +1677,25 @@ namespace test_speaker_stt_translate_tts
 
         #region STT Processing
 
-        private async Task ProcessAudioDataInternal(byte[] audioData)
+        /// <summary>
+        /// Последовательная обработка аудио сегментов для гарантированного хронологического порядка
+        /// </summary>
+        private async Task ProcessAudioSequentially(byte[] audioData)
+        {
+            int sequenceNum = Interlocked.Increment(ref audioSequenceNumber);
+            await audioProcessingSemaphore.WaitAsync(); // Ждем очереди
+            try
+            {
+                LogMessage($"🔢 Обработка аудио сегмента #{sequenceNum} в хронологическом порядке");
+                await ProcessAudioDataInternal(audioData, sequenceNum);
+            }
+            finally
+            {
+                audioProcessingSemaphore.Release(); // Освобождаем для следующего
+            }
+        }
+
+        private async Task ProcessAudioDataInternal(byte[] audioData, int sequenceNumber = 0)
         {
             try
             {
@@ -1689,18 +1714,18 @@ namespace test_speaker_stt_translate_tts
                     return; // Прекращаем обработку
                 }
                 
-                LogMessage($"🎯 Начало STT обработки ({audioData.Length} байт)");
+                LogMessage($"🎯 Сегмент #{sequenceNumber} - Начало STT обработки ({audioData.Length} байт)");
                 
                 // Convert to WAV format for Whisper
                 var wavData = ConvertToWav(audioData);
-                LogMessage($"🔄 Конвертация в WAV: {wavData.Length} байт");
+                LogMessage($"🔄 Сегмент #{sequenceNumber} - Конвертация в WAV: {wavData.Length} байт");
 
                 // Perform STT with Whisper.NET
                 string recognizedText = await PerformWhisperSTT(wavData);
                 
                 if (!string.IsNullOrEmpty(recognizedText) && IsValidSpeech(recognizedText))
                 {
-                    LogMessage($"✅ Распознан текст: '{recognizedText}'");
+                    LogMessage($"✅ Сегмент #{sequenceNumber} - Распознан текст: '{recognizedText}'");
                     
                     Invoke(() => {
                         txtRecognizedText.Text = recognizedText;
@@ -2229,18 +2254,62 @@ namespace test_speaker_stt_translate_tts
             }
         } // Конец TranslateSingleTextPart
 
+        /// <summary>
+        /// 🔊 НОВЫЙ МЕТОД: Последовательное TTS с ожиданием завершения предыдущего озвучивания
+        /// </summary>
+        private async Task SpeakTextSequentially(string text)
+        {
+            // Получаем уникальный номер последовательности для этого TTS
+            int ttsSequenceNum = Interlocked.Increment(ref ttsSequenceNumber);
+            
+            try
+            {
+                // Ждем своей очереди (только одно TTS выполняется одновременно)
+                await ttsProcessingSemaphore.WaitAsync();
+                
+                LogMessage($"🔢 TTS операция #{ttsSequenceNum} начата (ждем завершения предыдущей)");
+                
+                // Выполняем TTS
+                await SpeakTextInternal(text, ttsSequenceNum);
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка последовательного TTS #{ttsSequenceNum}: {ex.Message}");
+            }
+            finally
+            {
+                // Освобождаем семафор для следующего TTS
+                ttsProcessingSemaphore.Release();
+                LogMessage($"✅ TTS операция #{ttsSequenceNum} завершена, семафор освобожден");
+            }
+        }
+
         private async Task SpeakText(string text)
+        {
+            // Перенаправляем на последовательное выполнение
+            await SpeakTextSequentially(text);
+        }
+
+        private async Task SpeakTextInternal(string text, int ttsSequenceNumber = 0)
         {
             try
             {
                 if (speechSynthesizer == null || ttsVoiceManager == null) return;
                 
-                // Проверяем, не выполняется ли уже TTS операция
-                if (isTTSActive || speechSynthesizer.State == System.Speech.Synthesis.SynthesizerState.Speaking)
+                // 🔊 ИСПРАВЛЕНО: Убираем принудительную отмену - теперь ждем в очереди
+                LogMessage($"🔊 TTS #{ttsSequenceNumber} начинает озвучивание: '{text}'");
+                
+                // Дополнительная проверка состояния синтезатора
+                if (speechSynthesizer.State == System.Speech.Synthesis.SynthesizerState.Speaking)
                 {
-                    LogMessage("⚠️ TTS уже выполняется, отменяем предыдущую операцию...");
-                    speechSynthesizer.SpeakAsyncCancelAll();
-                    await Task.Delay(300); // Увеличенное время ожидания для стабильности
+                    LogMessage($"⚠️ TTS #{ttsSequenceNumber}: Синтезатор занят, ждем освобождения...");
+                    // Ждем, пока синтезатор освободится (максимум 10 секунд)
+                    for (int i = 0; i < 100; i++)
+                    {
+                        if (speechSynthesizer.State != System.Speech.Synthesis.SynthesizerState.Speaking)
+                            break;
+                        await Task.Delay(100);
+                    }
                 }
                 
                 // Дополнительная пауза для предотвращения конфликтов
@@ -2334,21 +2403,21 @@ namespace test_speaker_stt_translate_tts
                 // Уведомляем SmartAudioManager о завершении TTS
                 smartAudioManager?.NotifyTTSCompleted();
                 
-                LogMessage("✅ Озвучивание завершено");
+                LogMessage($"✅ TTS #{ttsSequenceNumber} озвучивание завершено");
             }
             catch (OperationCanceledException)
             {
                 // Специальная обработка отмены TTS
                 isTTSActive = false; // Гарантированно сбрасываем флаг
                 smartAudioManager?.NotifyTTSCompleted();
-                LogMessage("🛑 TTS отменен пользователем");
+                LogMessage($"🛑 TTS #{ttsSequenceNumber} отменен пользователем");
             }
             catch (Exception ex)
             {
                 // В случае других ошибок также уведомляем о завершении TTS
                 isTTSActive = false; // Гарантированно сбрасываем флаг
                 smartAudioManager?.NotifyTTSCompleted();
-                LogMessage($"❌ Ошибка озвучивания: {ex.Message}");
+                LogMessage($"❌ Ошибка TTS #{ttsSequenceNumber}: {ex.Message}");
             }
         }
 
@@ -2622,6 +2691,28 @@ namespace test_speaker_stt_translate_tts
                     {
                         Debug.WriteLine($"⚠️ Ошибка остановки AudioResampler: {ex.Message}");
                     }
+                }
+                
+                // Освобождаем семафор последовательной обработки
+                try
+                {
+                    audioProcessingSemaphore?.Dispose();
+                    Debug.WriteLine("✅ AudioProcessingSemaphore освобожден");
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"⚠️ Ошибка освобождения AudioProcessingSemaphore: {ex.Message}");
+                }
+                
+                // Освобождаем семафор TTS
+                try
+                {
+                    ttsProcessingSemaphore?.Dispose();
+                    Debug.WriteLine("✅ TtsProcessingSemaphore освобожден");
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"⚠️ Ошибка освобождения TtsProcessingSemaphore: {ex.Message}");
                 }
                 
                 // Устанавливаем флаг освобождения
