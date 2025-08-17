@@ -350,8 +350,21 @@ namespace test_speaker_stt_translate_tts
                         resultText += result.Text;
                     }
                 }
+
+                var finalText = resultText.Trim();
                 
-                return resultText.Trim();
+                // 🚀 НОВЫЙ: Используем продвинутый фильтр с аудио анализом
+                if (!string.IsNullOrWhiteSpace(finalText))
+                {
+                    bool isValid = AdvancedSpeechFilter.IsValidHumanSpeech(finalText, audioData);
+                    if (!isValid)
+                    {
+                        Debug.WriteLine($"🚫 Продвинутый фильтр отклонил: '{finalText}'");
+                        return "";
+                    }
+                }
+                
+                return finalText;
             }
             catch (ObjectDisposedException)
             {

@@ -368,17 +368,25 @@ namespace test_speaker_stt_translate_tts
                 
             try
             {
+                // 🧹 Очищаем эмоциональные маркеры для отображения
+                var cleanText = AdvancedSpeechFilter.CleanEmotionalMarkers(text);
+                if (string.IsNullOrWhiteSpace(cleanText))
+                {
+                    LogMessage($"🚫 Пропущен текст с только эмоциональными маркерами: {text}");
+                    return;
+                }
+
                 BeginInvoke(() =>
                 {
-                    LogMessage($"🎤 Распознано ({confidence:P1}): {text}");
+                    LogMessage($"🎤 Распознано ({confidence:P1}): {cleanText}");
                     
-                    // Добавляем к исходному тексту
-                    txtRecognizedText.Text += (txtRecognizedText.Text.Length > 0 ? " " : "") + text;
+                    // Добавляем очищенный текст к исходному тексту
+                    txtRecognizedText.Text += (txtRecognizedText.Text.Length > 0 ? " " : "") + cleanText;
                     txtRecognizedText.SelectionStart = txtRecognizedText.Text.Length;
                     txtRecognizedText.ScrollToCaret();
                     
-                    // Переводим асинхронно
-                    _ = Task.Run(async () => await TranslateStreamingText(text));
+                    // Переводим асинхронно (используем очищенный текст)
+                    _ = Task.Run(async () => await TranslateStreamingText(cleanText));
                 });
             }
             catch (Exception ex)
@@ -417,6 +425,13 @@ namespace test_speaker_stt_translate_tts
         {
             try
             {
+                // Текст уже очищен в OnStreamingTextRecognized
+                if (string.IsNullOrWhiteSpace(text))
+                {
+                    LogMessage($"🚫 Пустой текст для перевода");
+                    return;
+                }
+
                 string sourceLanguage = "";
                 string targetLanguage = "";
                 
@@ -1510,107 +1525,15 @@ namespace test_speaker_stt_translate_tts
 
         private bool IsValidSpeech(string text)
         {
-            if (string.IsNullOrWhiteSpace(text)) return false;
-            
-            string cleanText = text.Trim().ToLower();
-            
-            // Filter out Whisper placeholders and tokens
-            string[] invalidTokens = {
-                "[", "]", "(", ")",
-                "wheat", "subscribe", "music", "applause", "nice move", "stack", "tablet", "drums",
-                "пшеница", "подписаться", "музыка", "аплодисменты",
-                "thank you", "спасибо", "thanks", "bye", "пока",
-                "this is human speech", "this is human", "human speech" // Добавлены Whisper заглушки
-            };
-            
-            // Check for exact placeholder matches first
-            foreach (string token in invalidTokens)
-            {
-                if (cleanText.Contains(token))
-                {
-                    LogMessage($"🚫 Отфильтровано как заглушка: содержит '{token}'");
-                    return false;
-                }
-            }
-            
-            // Check for repetitive patterns (same phrase repeated multiple times)
-            string[] words = cleanText.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (words.Length > 9) // More than 3 words repeated 3 times
-            {
-                var wordGroups = new Dictionary<string, int>();
-                for (int i = 0; i < words.Length - 2; i++)
-                {
-                    string trigram = $"{words[i]} {words[i + 1]} {words[i + 2]}";
-                    if (wordGroups.ContainsKey(trigram))
-                        wordGroups[trigram]++;
-                    else
-                        wordGroups[trigram] = 1;
-                }
-                
-                var mostRepeated = wordGroups.Where(kv => kv.Value >= 3).FirstOrDefault();
-                if (mostRepeated.Value >= 3)
-                {
-                    LogMessage($"🚫 Отфильтрован как повторяющаяся заглушка: '{mostRepeated.Key}' повторяется {mostRepeated.Value} раз");
-                    return false;
-                }
-            }
-            
-            foreach (string token in invalidTokens)
-            {
-                if (cleanText.Contains(token.ToLower()))
-                {
-                    LogMessage($"🚫 Отфильтрован как заглушка: '{text}' (содержит '{token}')");
-                    return false;
-                }
-            }
-            
-            // Определяем минимальную длину в зависимости от содержимого
-            int minLength = 3;
-            
-            // Если текст содержит цифры, разрешаем более короткие строки
-            if (cleanText.Any(char.IsDigit) && !cleanText.Any(char.IsLetter))
-            {
-                minLength = 1; // Для чисел разрешаем даже одну цифру
-            }
-            
-            // Must meet minimum length and contain letters OR digits
-            if (cleanText.Length < minLength || (!cleanText.Any(char.IsLetter) && !cleanText.Any(char.IsDigit)))
-            {
-                LogMessage($"🚫 Слишком короткий или не содержит букв/цифр: '{text}' (мин. длина: {minLength})");
-                return false;
-            }
-            
-            return true;
+            // 🚀 НОВЫЙ ПРОДВИНУТЫЙ ФИЛЬТР из MORT
+            return AdvancedSpeechFilter.IsValidSpeechQuick(text) && 
+                   !AdvancedSpeechFilter.HasExtremeDuplication(text);
         }
 
         private bool IsPlaceholderToken(string text)
         {
-            if (string.IsNullOrWhiteSpace(text)) return true;
-            
-            string cleanText = text.Trim().ToLower();
-            
-            // Быстрая проверка отдельных токенов
-            string[] singleTokens = {
-                "[music]", "[drums]", "[distorted breathing]", "[drum roll]", "[dark music]", "[distorted sound]",
-                "[applause]", "[laughter]", "[beep]", "[click]", "[noise]", "[silence]",
-                "music", "drums", "applause", "laughter", "beep", "click", "noise", "silence"
-            };
-            
-            foreach (string token in singleTokens)
-            {
-                if (cleanText.Equals(token))
-                {
-                    return true;
-                }
-            }
-            
-            // Проверка на содержание скобок
-            if (cleanText.Contains("[") || cleanText.Contains("("))
-            {
-                return true;
-            }
-            
-            return false;
+            // 🚀 Используем продвинутый фильтр вместо собственной логики
+            return !AdvancedSpeechFilter.IsValidSpeechQuick(text);
         }
 
         private byte[] ConvertToWav(byte[] audioData)

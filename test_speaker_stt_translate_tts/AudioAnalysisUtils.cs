@@ -94,28 +94,8 @@ namespace test_speaker_stt_translate_tts
         /// </summary>
         public static bool IsAudioPlaceholder(string text)
         {
-            if (string.IsNullOrWhiteSpace(text)) return true;
-            
-            // Список известных заглушек Whisper
-            var placeholders = new[]
-            {
-                "пшеница", "подписаться", "спасибо за просмотр",
-                "thank you for watching", "subscribe", "like and subscribe",
-                "музыка", "аплодисменты", "смех", "music", "applause", "laughter"
-            };
-            
-            string lowerText = text.ToLower().Trim();
-            
-            // Проверяем точные совпадения
-            if (placeholders.Contains(lowerText)) return true;
-            
-            // Проверяем очень короткий текст
-            if (lowerText.Length <= 2) return true;
-            
-            // Проверяем повторяющиеся символы
-            if (lowerText.All(c => c == lowerText[0])) return true;
-            
-            return false;
+            // 🚀 Используем продвинутый фильтр из MORT вместо простых проверок
+            return !AdvancedSpeechFilter.IsValidSpeechQuick(text);
         }
 
         /// <summary>
