@@ -48,6 +48,7 @@ namespace test_speaker_stt_translate_tts
         // STT & Translation
         private static string WhisperModelPath => Path.Combine(Application.StartupPath, "models", "whisper", "ggml-small.bin");
         private SpeechSynthesizer? speechSynthesizer;
+        private TtsVoiceManager? ttsVoiceManager;
         private RestClient? googleTranslateClient;
         
         // Статистика
@@ -253,7 +254,12 @@ namespace test_speaker_stt_translate_tts
                 speechSynthesizer = new SpeechSynthesizer();
                 speechSynthesizer.Volume = 100;
                 speechSynthesizer.Rate = 0;
-                LogMessage("✅ TTS инициализирован");
+                
+                // Инициализируем менеджер голосов с автоматическим переключением
+                ttsVoiceManager = new TtsVoiceManager(speechSynthesizer);
+                
+                LogMessage("✅ TTS инициализирован с автоматическим выбором голосов");
+                LogMessage($"📢 Доступные голоса: {ttsVoiceManager.GetVoiceInfo()}");
             }
             catch (Exception ex)
             {
@@ -1850,7 +1856,7 @@ namespace test_speaker_stt_translate_tts
         {
             try
             {
-                if (speechSynthesizer == null) return;
+                if (speechSynthesizer == null || ttsVoiceManager == null) return;
                 
                 // Проверяем, не выполняется ли уже TTS операция
                 if (isTTSActive || speechSynthesizer.State == System.Speech.Synthesis.SynthesizerState.Speaking)
@@ -1865,6 +1871,9 @@ namespace test_speaker_stt_translate_tts
                 
                 // Уведомляем SmartAudioManager о начале TTS
                 smartAudioManager?.NotifyTTSStarted();
+                
+                // АВТОМАТИЧЕСКИЙ ВЫБОР ГОЛОСА НА ОСНОВЕ ЯЗЫКА ТЕКСТА
+                ttsVoiceManager.SelectVoiceForText(text);
                 
                 // Используем асинхронный подход для корректной отмены
                 var completionSource = new TaskCompletionSource<bool>();
@@ -2159,6 +2168,21 @@ namespace test_speaker_stt_translate_tts
                     catch (Exception ex)
                     {
                         Debug.WriteLine($"⚠️ Ошибка остановки TTS: {ex.Message}");
+                    }
+                }
+                
+                // Освобождаем TTS Voice Manager
+                if (ttsVoiceManager != null)
+                {
+                    try
+                    {
+                        ttsVoiceManager.Dispose();
+                        ttsVoiceManager = null;
+                        Debug.WriteLine("✅ TTS Voice Manager освобожден");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"⚠️ Ошибка освобождения TTS Voice Manager: {ex.Message}");
                     }
                 }
                 
