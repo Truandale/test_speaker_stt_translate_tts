@@ -1,0 +1,8 @@
+<Project>
+  <PropertyGroup>
+    <!-- Отключаем проблемные функции для Design Tools -->
+    <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
+    <UseWindowsForms>true</UseWindowsForms>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+</Project>

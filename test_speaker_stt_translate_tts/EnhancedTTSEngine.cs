@@ -4,12 +4,13 @@ using System.Diagnostics;
 namespace test_speaker_stt_translate_tts
 {
     /// <summary>
-    /// Улучшенный TTS класс с логикой из MORT
+    /// Улучшенный TTS класс с логикой из MORT и интеграцией с SmartAudioManager
     /// </summary>
     public class EnhancedTTSEngine : IDisposable
     {
         private SpeechSynthesizer? speechSynthesizer;
         private bool isTTSActive = false;
+        private SmartAudioManager? audioManager;
         
         // События
         public event Action? TTSStarted;
@@ -18,8 +19,9 @@ namespace test_speaker_stt_translate_tts
         
         public bool IsTTSActive => isTTSActive;
 
-        public EnhancedTTSEngine()
+        public EnhancedTTSEngine(SmartAudioManager? smartAudioManager = null)
         {
+            audioManager = smartAudioManager;
             InitializeTTS();
         }
 
@@ -34,6 +36,7 @@ namespace test_speaker_stt_translate_tts
                 speechSynthesizer.SpeakStarted += (s, e) => 
                 {
                     isTTSActive = true;
+                    audioManager?.NotifyTTSStarted(); // Уведомляем менеджер
                     TTSStarted?.Invoke();
                     AudioAnalysisUtils.SafeDebugLog("🔊 TTS начат");
                 };
@@ -41,6 +44,7 @@ namespace test_speaker_stt_translate_tts
                 speechSynthesizer.SpeakCompleted += (s, e) => 
                 {
                     isTTSActive = false;
+                    audioManager?.NotifyTTSCompleted(); // Уведомляем менеджер
                     TTSCompleted?.Invoke();
                     AudioAnalysisUtils.SafeDebugLog("✅ TTS завершен");
                 };

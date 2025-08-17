@@ -50,6 +50,8 @@
             this.chkAutoTranslate = new CheckBox();
             this.lblAudioLevel = new Label();
             this.progressAudioLevel = new ProgressBar();
+            this.cbProcessingMode = new ComboBox();
+            this.lblProcessingMode = new Label();
             ((System.ComponentModel.ISupportInitialize)(this.numThreshold)).BeginInit();
             this.SuspendLayout();
             // 
@@ -182,12 +184,29 @@
             this.chkAutoTranslate.AutoSize = true;
             this.chkAutoTranslate.Checked = true;
             this.chkAutoTranslate.CheckState = CheckState.Checked;
-            this.chkAutoTranslate.Location = new Point(12, 150);
+            this.chkAutoTranslate.Location = new Point(300, 150);
             this.chkAutoTranslate.Name = "chkAutoTranslate";
             this.chkAutoTranslate.Size = new Size(151, 19);
             this.chkAutoTranslate.TabIndex = 13;
             this.chkAutoTranslate.Text = "🔄 Автоперевод + TTS";
             this.chkAutoTranslate.UseVisualStyleBackColor = true;
+            // 
+            // cbProcessingMode
+            // 
+            this.cbProcessingMode.DropDownStyle = ComboBoxStyle.DropDownList;
+            this.cbProcessingMode.Location = new Point(120, 147);
+            this.cbProcessingMode.Name = "cbProcessingMode";
+            this.cbProcessingMode.Size = new Size(160, 23);
+            this.cbProcessingMode.TabIndex = 22;
+            // 
+            // lblProcessingMode
+            // 
+            this.lblProcessingMode.AutoSize = true;
+            this.lblProcessingMode.Location = new Point(12, 150);
+            this.lblProcessingMode.Name = "lblProcessingMode";
+            this.lblProcessingMode.Size = new Size(102, 15);
+            this.lblProcessingMode.TabIndex = 23;
+            this.lblProcessingMode.Text = "⚙️ Режим работы:";
             // 
             // btnTestTTS
             // 
@@ -290,6 +309,8 @@
             this.Controls.Add(this.txtRecognizedText);
             this.Controls.Add(this.lblRecognized);
             this.Controls.Add(this.btnTestTTS);
+            this.Controls.Add(this.lblProcessingMode);
+            this.Controls.Add(this.cbProcessingMode);
             this.Controls.Add(this.chkAutoTranslate);
             this.Controls.Add(this.progressAudioLevel);
             this.Controls.Add(this.lblAudioLevel);
@@ -339,5 +360,7 @@
         private CheckBox chkAutoTranslate;
         private Label lblAudioLevel;
         private ProgressBar progressAudioLevel;
+        private ComboBox cbProcessingMode;
+        private Label lblProcessingMode;
     }
 }
