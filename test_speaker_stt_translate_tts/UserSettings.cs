@@ -38,7 +38,7 @@ namespace test_speaker_stt_translate_tts
         public int WindowWidth { get; set; } = 800;
 
         [JsonPropertyName("windowHeight")]
-        public int WindowHeight { get; set; } = 600;
+        public int WindowHeight { get; set; } = 570; // Синхронизировано с дизайнером
 
         [JsonPropertyName("windowLocationX")]
         public int WindowLocationX { get; set; } = -1;
@@ -167,7 +167,7 @@ namespace test_speaker_stt_translate_tts
                 WindowWidth = 800;
 
             if (WindowHeight < 300)
-                WindowHeight = 600;
+                WindowHeight = 570; // Обновленное значение по умолчанию
         }
 
         /// <summary>

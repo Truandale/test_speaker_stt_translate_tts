@@ -310,9 +310,10 @@
             // 
             // Form1
             // 
-            this.AutoScaleDimensions = new SizeF(7F, 15F);
-            this.AutoScaleMode = AutoScaleMode.Font;
+            this.AutoScaleDimensions = new SizeF(96F, 96F);
+            this.AutoScaleMode = AutoScaleMode.Dpi;
             this.ClientSize = new Size(800, 570);
+            this.MinimumSize = new Size(800, 570);
             this.Controls.Add(this.txtLogs);
             this.Controls.Add(this.lblLogs);
             this.Controls.Add(this.progressBar);

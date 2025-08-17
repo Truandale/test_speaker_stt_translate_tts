@@ -615,19 +615,30 @@ namespace test_speaker_stt_translate_tts
             try
             {
                 cancellationTokenSource.Cancel();
+                Debug.WriteLine("🔄 Обработка отменена");
             }
             catch (ObjectDisposedException)
             {
                 // Игнорируем - токен уже был освобожден
             }
-            
-            // Ждем завершения задачи обработки
+
+            // Ждем завершения задачи обработки с более агрессивным таймаутом
             try
             {
                 if (processingTask != null)
                 {
-                    await processingTask.WaitAsync(TimeSpan.FromSeconds(3));
+                    // Даем только 1 секунду на graceful shutdown
+                    using (var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(1)))
+                    {
+                        await processingTask.WaitAsync(timeoutCts.Token);
+                    }
+                    Debug.WriteLine("🛑 Цикл обработки Whisper остановлен");
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                Debug.WriteLine("⚠️ Принудительное завершение задачи обработки по таймауту");
+                // Принудительно завершаем задачу - это нормально при остановке
             }
             catch (Exception ex)
             {

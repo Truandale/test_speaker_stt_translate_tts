@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 
 namespace test_speaker_stt_translate_tts
 {
@@ -359,6 +360,81 @@ namespace test_speaker_stt_translate_tts
                 AudioAnalysisUtils.SafeDebugLog($"   Предложений: {sentences.Count}");
                 AudioAnalysisUtils.SafeDebugLog($"   Средняя длина: {sentences.Average(s => s.Length):F1} символов");
                 AudioAnalysisUtils.SafeDebugLog($"   Мин/Макс: {sentences.Min(s => s.Length)}/{sentences.Max(s => s.Length)} символов");
+            }
+        }
+
+        /// <summary>
+        /// Переводит длинный текст по частям для предотвращения JSON ошибок
+        /// Адаптировано из MORT MegaAudioSettings.TranslateLongTextInParts
+        /// </summary>
+        public static async Task<string> TranslateLongTextInParts(string longText, 
+            Func<string, string, string, Task<string>> translateFunction,
+            string sourceLanguage, string targetLanguage)
+        {
+            try
+            {
+                AudioAnalysisUtils.SafeDebugLog($"🔄 [SmartSplitter] Разбиваем длинный текст на предложения: {longText.Length} символов");
+
+                // Используем существующую умную разбивку
+                var sentences = SplitIntoSentences(longText);
+
+                AudioAnalysisUtils.SafeDebugLog($"📝 [SmartSplitter] Получилось {sentences.Count} предложений для перевода");
+
+                if (sentences.Count <= 1)
+                {
+                    // Если разбивка не дала результата, используем обычный перевод
+                    AudioAnalysisUtils.SafeDebugLog($"📝 [SmartSplitter] Используем обычный перевод для текста: {longText.Length} символов");
+                    return await translateFunction(longText, sourceLanguage, targetLanguage);
+                }
+
+                var translatedParts = new List<string>();
+
+                // Переводим каждое предложение отдельно
+                for (int i = 0; i < sentences.Count; i++)
+                {
+                    string sentence = sentences[i];
+                    string preview = sentence.Length > 50 ? sentence.Substring(0, 47) + "..." : sentence;
+
+                    AudioAnalysisUtils.SafeDebugLog($"🔄 [SmartSplitter] Переводим часть {i + 1}/{sentences.Count}: '{preview}'");
+
+                    try
+                    {
+                        string partResult = await translateFunction(sentence, sourceLanguage, targetLanguage);
+                        
+                        if (!string.IsNullOrEmpty(partResult) && !partResult.Contains("[Ошибка]"))
+                        {
+                            translatedParts.Add(partResult.Trim());
+                            string resultPreview = partResult.Length > 50 ? partResult.Substring(0, 47) + "..." : partResult;
+                            AudioAnalysisUtils.SafeDebugLog($"✅ [SmartSplitter] Часть {i + 1} переведена: '{resultPreview}'");
+                        }
+                        else
+                        {
+                            AudioAnalysisUtils.SafeDebugLog($"❌ [SmartSplitter] Часть {i + 1} не переведена, используем оригинал");
+                            translatedParts.Add(sentence); // Добавляем оригинал если перевод не удался
+                        }
+
+                        // Небольшая задержка между запросами к API для предотвращения rate limiting
+                        await Task.Delay(150);
+                    }
+                    catch (Exception partEx)
+                    {
+                        AudioAnalysisUtils.SafeDebugLog($"❌ [SmartSplitter] Ошибка перевода части {i + 1}: {partEx.Message}");
+                        translatedParts.Add(sentence); // Добавляем оригинал при ошибке
+                    }
+                }
+
+                // Объединяем переведенные части с правильными разделителями
+                string finalResult = string.Join(" ", translatedParts);
+
+                string finalPreview = finalResult.Length > 100 ? finalResult.Substring(0, 97) + "..." : finalResult;
+                AudioAnalysisUtils.SafeDebugLog($"✅ [SmartSplitter] Длинный текст переведен по частям: '{finalPreview}' ({finalResult.Length} символов)");
+                
+                return finalResult;
+            }
+            catch (Exception ex)
+            {
+                AudioAnalysisUtils.SafeDebugLog($"❌ [SmartSplitter] Критическая ошибка перевода длинного текста: {ex.Message}");
+                return $"[Ошибка перевода длинного текста] {longText}";
             }
         }
     }
