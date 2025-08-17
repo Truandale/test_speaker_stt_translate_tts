@@ -29,6 +29,18 @@ namespace test_speaker_stt_translate_tts
         private readonly SemaphoreSlim ttsProcessingSemaphore = new(1, 1);
         private int ttsSequenceNumber = 0;
         
+        // 🚀 CPU ОПТИМИЗАЦИИ: Переменные для умного UI обновления
+        private int lastAudioPercentage = -1;
+        private DateTime lastUIUpdate = DateTime.MinValue;
+        private const int UI_UPDATE_INTERVAL_MS = 200;
+        
+        // 🚀 CPU ОПТИМИЗАЦИИ: Throttling аудиообработки
+        private DateTime lastAudioProcessTime = DateTime.MinValue;
+        private const int AUDIO_THROTTLE_MS = 50; // Минимальный интервал между обработкой
+        
+        // 🚀 CPU ОПТИМИЗАЦИИ: Оптимизированное логирование
+        private bool enableDetailedLogging = false; // Отключено по умолчанию для производительности
+        
         private volatile bool isTTSActive = false; // Для отслеживания активных TTS операций
         private DateTime lastVoiceActivity = DateTime.Now;
         private DateTime recordingStartTime = DateTime.Now;
@@ -308,7 +320,7 @@ namespace test_speaker_stt_translate_tts
         private void InitializeTimer()
         {
             audioLevelTimer = new System.Windows.Forms.Timer();
-            audioLevelTimer.Interval = 100; // Update every 100ms
+            audioLevelTimer.Interval = 250; // 🚀 ОПТИМИЗАЦИЯ: Увеличиваем интервал до 250мс (-60% вызовов)
             audioLevelTimer.Tick += AudioLevelTimer_Tick;
         }
 
@@ -1202,9 +1214,17 @@ namespace test_speaker_stt_translate_tts
                 return; // Форма закрыта, прекращаем обработку аудио
             }
             
+            // 🚀 THROTTLING АУДИООБРАБОТКИ: Ограничиваем частоту обработки
+            DateTime now = DateTime.Now;
+            if ((now - lastAudioProcessTime).TotalMilliseconds < AUDIO_THROTTLE_MS)
+            {
+                return; // Пропускаем слишком частые вызовы
+            }
+            lastAudioProcessTime = now;
+            
             if (!isCapturing) 
             {
-                LogMessage("⚠️ OnAudioDataAvailable: isCapturing=false, игнорируем данные");
+                LogMessageDebug("⚠️ OnAudioDataAvailable: isCapturing=false, игнорируем данные");
                 return;
             }
 
@@ -1646,12 +1666,17 @@ namespace test_speaker_stt_translate_tts
             float sum = 0f;
             int sampleCount = 0;
 
-            // Assuming 32-bit float samples
-            for (int i = 0; i < bytesRecorded - 3; i += 4)
+            // 🚀 ОПТИМИЗАЦИЯ СЕМПЛОВ: Анализируем каждый 4-й семпл для снижения CPU нагрузки (-75%)
+            const int SKIP_SAMPLES = 4; // Анализируем каждый 4-й семпл
+            
+            for (int i = 0; i < bytesRecorded - 3; i += 4 * SKIP_SAMPLES)
             {
-                float sample = BitConverter.ToSingle(buffer, i);
-                sum += Math.Abs(sample);
-                sampleCount++;
+                if (i + 3 < bytesRecorded)
+                {
+                    float sample = BitConverter.ToSingle(buffer, i);
+                    sum += Math.Abs(sample);
+                    sampleCount++;
+                }
             }
 
             float avgLevel = sampleCount > 0 ? sum / sampleCount : 0f;
@@ -1667,9 +1692,21 @@ namespace test_speaker_stt_translate_tts
                 int percentage = (int)(currentAudioLevel * 100);
                 percentage = Math.Min(100, percentage);
                 
-                progressAudioLevel.Value = percentage;
-                lblAudioLevel.Text = $"📊 Уровень: {percentage}%";
-                lblAudioLevel.ForeColor = percentage > (voiceThreshold * 100) ? Color.Green : Color.Gray;
+                // 🚀 УМНОЕ UI ОБНОВЛЕНИЕ: Обновляем только при изменениях или по таймауту
+                DateTime now = DateTime.Now;
+                bool shouldUpdate = (percentage != lastAudioPercentage) || 
+                                   (now - lastUIUpdate).TotalMilliseconds > UI_UPDATE_INTERVAL_MS;
+
+                if (shouldUpdate)
+                {
+                    // Обновляем UI только при реальных изменениях или по таймауту
+                    progressAudioLevel.Value = percentage;
+                    lblAudioLevel.Text = $"📊 Уровень: {percentage}%";
+                    lblAudioLevel.ForeColor = percentage > (voiceThreshold * 100) ? Color.Green : Color.Gray;
+                    
+                    lastAudioPercentage = percentage;
+                    lastUIUpdate = now;
+                }
             }
         }
 
@@ -2495,6 +2532,21 @@ namespace test_speaker_stt_translate_tts
         #endregion
 
         #region Logging
+
+        /// <summary>
+        /// 🚀 ОПТИМИЗИРОВАННОЕ ЛОГИРОВАНИЕ: Выбирает между полным UI логированием и только Debug
+        /// </summary>
+        private void LogMessageDebug(string message)
+        {
+            if (enableDetailedLogging)
+            {
+                LogMessage(message); // Полное логирование с UI
+            }
+            else
+            {
+                Debug.WriteLine($"[{DateTime.Now:HH:mm:ss.fff}] {message}"); // Только Debug консоль
+            }
+        }
 
         private void LogMessage(string message)
         {
