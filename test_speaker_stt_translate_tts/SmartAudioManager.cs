@@ -84,13 +84,6 @@ namespace test_speaker_stt_translate_tts
         /// </summary>
         public void QueueAudioSegment(byte[] audioData, DateTime timestamp, string source = "capture")
         {
-            // Не добавляем в очередь во время TTS
-            if (isTTSActive && source != "priority")
-            {
-                SafeLog($"⏸️ Аудио сегмент отклонен (TTS активен): {audioData.Length} байт");
-                return;
-            }
-
             var segment = new AudioSegment
             {
                 AudioData = audioData,
@@ -100,7 +93,15 @@ namespace test_speaker_stt_translate_tts
             };
 
             audioQueue.Enqueue(segment);
-            SafeLog($"📥 Аудио в очереди: {audioData.Length} байт, всего в очереди: {audioQueue.Count}");
+            
+            if (isTTSActive && source != "priority")
+            {
+                SafeLog($"📥 Аудио накоплен во время TTS: {audioData.Length} байт, всего в очереди: {audioQueue.Count}");
+            }
+            else
+            {
+                SafeLog($"📥 Аудио в очереди: {audioData.Length} байт, всего в очереди: {audioQueue.Count}");
+            }
         }
 
         /// <summary>

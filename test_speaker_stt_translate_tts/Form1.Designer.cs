@@ -52,6 +52,7 @@
             this.progressAudioLevel = new ProgressBar();
             this.cbProcessingMode = new ComboBox();
             this.lblProcessingMode = new Label();
+            this.lblStats = new Label();
             ((System.ComponentModel.ISupportInitialize)(this.numThreshold)).BeginInit();
             this.SuspendLayout();
             // 
@@ -208,6 +209,17 @@
             this.lblProcessingMode.TabIndex = 23;
             this.lblProcessingMode.Text = "⚙️ Режим работы:";
             // 
+            // lblStats
+            // 
+            this.lblStats.AutoSize = true;
+            this.lblStats.Font = new Font("Segoe UI", 8F);
+            this.lblStats.ForeColor = Color.Gray;
+            this.lblStats.Location = new Point(300, 150);
+            this.lblStats.Name = "lblStats";
+            this.lblStats.Size = new Size(200, 13);
+            this.lblStats.TabIndex = 24;
+            this.lblStats.Text = "📊 Статистика: готов к работе";
+            // 
             // btnTestTTS
             // 
             this.btnTestTTS.Location = new Point(180, 147);
@@ -309,6 +321,7 @@
             this.Controls.Add(this.txtRecognizedText);
             this.Controls.Add(this.lblRecognized);
             this.Controls.Add(this.btnTestTTS);
+            this.Controls.Add(this.lblStats);
             this.Controls.Add(this.lblProcessingMode);
             this.Controls.Add(this.cbProcessingMode);
             this.Controls.Add(this.chkAutoTranslate);
@@ -362,5 +375,6 @@
         private ProgressBar progressAudioLevel;
         private ComboBox cbProcessingMode;
         private Label lblProcessingMode;
+        private Label lblStats;
     }
 }
