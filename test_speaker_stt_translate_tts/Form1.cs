@@ -21,6 +21,7 @@ namespace test_speaker_stt_translate_tts
         private bool isCapturing = false;
         private bool isCollectingAudio = false;
         private int audioLogCount = 0; // Для отладки перезапуска
+        private volatile bool isTTSActive = false; // Для отслеживания активных TTS операций
         private DateTime lastVoiceActivity = DateTime.Now;
         private DateTime recordingStartTime = DateTime.Now;
         private float voiceThreshold = 0.05f; // Повысим порог активации
@@ -590,6 +591,7 @@ namespace test_speaker_stt_translate_tts
                 // 1. Останавливаем захват аудио
                 isCapturing = false;
                 isCollectingAudio = false;
+                isTTSActive = false; // Принудительно сбрасываем TTS флаг
                 audioLevelTimer?.Stop();
                 
                 // 2. Очищаем все буферы
@@ -1469,6 +1471,13 @@ namespace test_speaker_stt_translate_tts
                     }
                 }
             }
+            catch (OperationCanceledException)
+            {
+                LogMessage("🛑 Операция перевода/озвучивания отменена");
+                Invoke(() => {
+                    txtTranslatedText.Text = "🛑 Операция отменена";
+                });
+            }
             catch (Exception ex)
             {
                 LogMessage($"❌ Ошибка перевода: {ex.Message}");
@@ -1555,6 +1564,13 @@ namespace test_speaker_stt_translate_tts
                         txtTranslatedText.Text = "❌ Ошибка составного перевода";
                     });
                 }
+            }
+            catch (OperationCanceledException)
+            {
+                LogMessage("🛑 Операция составного перевода/озвучивания отменена");
+                Invoke(() => {
+                    txtTranslatedText.Text = "🛑 Составная операция отменена";
+                });
             }
             catch (Exception ex)
             {
@@ -1647,27 +1663,95 @@ namespace test_speaker_stt_translate_tts
             {
                 if (speechSynthesizer == null) return;
                 
+                // Проверяем, не выполняется ли уже TTS операция
+                if (isTTSActive || speechSynthesizer.State == System.Speech.Synthesis.SynthesizerState.Speaking)
+                {
+                    LogMessage("⚠️ TTS уже выполняется, отменяем предыдущую операцию...");
+                    speechSynthesizer.SpeakAsyncCancelAll();
+                    await Task.Delay(200); // Увеличим время ожидания
+                }
+                
+                isTTSActive = true; // Устанавливаем флаг активности
                 LogMessage($"🔊 Озвучивание: '{text}'");
                 
                 // Уведомляем SmartAudioManager о начале TTS
                 smartAudioManager?.NotifyTTSStarted();
                 
-                await Task.Run(() => {
-                    try
+                // Используем асинхронный подход для корректной отмены
+                var completionSource = new TaskCompletionSource<bool>();
+                System.Speech.Synthesis.Prompt prompt = null;
+                
+                try
+                {
+                    // Дополнительная проверка перед вызовом Speak
+                    if (speechSynthesizer?.State != System.Speech.Synthesis.SynthesizerState.Ready)
                     {
-                        speechSynthesizer.Speak(text); // Используем синхронный Speak для корректной работы событий
+                        LogMessage("⚠️ Синтезатор не готов, пропускаем озвучивание");
+                        return;
                     }
-                    catch (OperationCanceledException)
+                    
+                    // Обработчики событий для асинхронного TTS
+                    EventHandler<System.Speech.Synthesis.SpeakCompletedEventArgs> onCompleted = null;
+                    EventHandler<System.Speech.Synthesis.SpeakProgressEventArgs> onProgress = null;
+                    
+                    onCompleted = (s, e) => {
+                        speechSynthesizer.SpeakCompleted -= onCompleted;
+                        speechSynthesizer.SpeakProgress -= onProgress;
+                        isTTSActive = false; // Сбрасываем флаг активности
+                        
+                        if (e.Cancelled)
+                        {
+                            LogMessage("🛑 TTS операция отменена асинхронно");
+                            completionSource.SetCanceled();
+                        }
+                        else if (e.Error != null)
+                        {
+                            LogMessage($"❌ Ошибка TTS: {e.Error.Message}");
+                            completionSource.SetException(e.Error);
+                        }
+                        else
+                        {
+                            completionSource.SetResult(true);
+                        }
+                    };
+                    
+                    onProgress = (s, e) => {
+                        // Дополнительная проверка на отмену во время выполнения
+                        if (speechSynthesizer?.State == System.Speech.Synthesis.SynthesizerState.Ready)
+                        {
+                            speechSynthesizer.SpeakAsyncCancelAll();
+                        }
+                    };
+                    
+                    speechSynthesizer.SpeakCompleted += onCompleted;
+                    speechSynthesizer.SpeakProgress += onProgress;
+                    
+                    // Запускаем асинхронное озвучивание
+                    prompt = speechSynthesizer.SpeakAsync(text);
+                    
+                    // Ожидаем завершения с возможностью отмены
+                    await completionSource.Task;
+                }
+                catch (OperationCanceledException)
+                {
+                    isTTSActive = false; // Сбрасываем флаг при отмене
+                    LogMessage("🛑 TTS операция отменена");
+                    if (prompt != null)
                     {
-                        LogMessage("🛑 TTS операция отменена");
-                        throw; // Пробрасываем исключение для обработки во внешнем catch
+                        speechSynthesizer?.SpeakAsyncCancel(prompt);
                     }
-                    catch (Exception ex)
+                    throw; // Пробрасываем для обработки во внешнем catch
+                }
+                catch (Exception ex)
+                {
+                    isTTSActive = false; // Сбрасываем флаг при ошибке
+                    LogMessage($"❌ Внутренняя ошибка TTS: {ex.Message}");
+                    if (prompt != null)
                     {
-                        LogMessage($"❌ Внутренняя ошибка TTS: {ex.Message}");
-                        throw;
+                        speechSynthesizer?.SpeakAsyncCancel(prompt);
                     }
-                });
+                    throw;
+                }
                 
                 // Уведомляем SmartAudioManager о завершении TTS
                 smartAudioManager?.NotifyTTSCompleted();
@@ -1677,12 +1761,14 @@ namespace test_speaker_stt_translate_tts
             catch (OperationCanceledException)
             {
                 // Специальная обработка отмены TTS
+                isTTSActive = false; // Гарантированно сбрасываем флаг
                 smartAudioManager?.NotifyTTSCompleted();
                 LogMessage("🛑 TTS отменен пользователем");
             }
             catch (Exception ex)
             {
                 // В случае других ошибок также уведомляем о завершении TTS
+                isTTSActive = false; // Гарантированно сбрасываем флаг
                 smartAudioManager?.NotifyTTSCompleted();
                 LogMessage($"❌ Ошибка озвучивания: {ex.Message}");
             }
@@ -1703,16 +1789,27 @@ namespace test_speaker_stt_translate_tts
 
         private async void btnTestTTS_Click(object sender, EventArgs e)
         {
-            string testText = "";
-            
-            // Безопасное получение значения из UI потока
-            Invoke(() => {
-                testText = cbTargetLang.SelectedItem?.ToString() == "Русский" 
-                    ? "Тест системы озвучивания текста" 
-                    : "Text to speech system test";
-            });
+            try
+            {
+                string testText = "";
                 
-            await SpeakText(testText);
+                // Безопасное получение значения из UI потока
+                Invoke(() => {
+                    testText = cbTargetLang.SelectedItem?.ToString() == "Русский" 
+                        ? "Тест системы озвучивания текста" 
+                        : "Text to speech system test";
+                });
+                    
+                await SpeakText(testText);
+            }
+            catch (OperationCanceledException)
+            {
+                LogMessage("🛑 Тест TTS отменен");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка теста TTS: {ex.Message}");
+            }
         }
 
         private void Form1_FormClosing(object sender, FormClosingEventArgs e)
