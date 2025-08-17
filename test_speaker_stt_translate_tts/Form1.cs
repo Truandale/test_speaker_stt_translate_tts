@@ -20,6 +20,7 @@ namespace test_speaker_stt_translate_tts
         private List<byte> audioBuffer = new();
         private bool isCapturing = false;
         private bool isCollectingAudio = false;
+        private int audioLogCount = 0; // Для отладки перезапуска
         private DateTime lastVoiceActivity = DateTime.Now;
         private DateTime recordingStartTime = DateTime.Now;
         private float voiceThreshold = 0.05f; // Повысим порог активации
@@ -493,7 +494,17 @@ namespace test_speaker_stt_translate_tts
 
         private void btnStopCapture_Click(object sender, EventArgs e)
         {
-            StopAudioCapture();
+            // Проверяем, нужен ли обычный стоп или полный сброс
+            if (isCapturing)
+            {
+                // Обычная остановка
+                _ = StopAudioCapture(); // Fire and forget async call
+            }
+            else
+            {
+                // Если уже остановлено, делаем полный сброс системы
+                ResetSystemToInitialState();
+            }
         }
 
         private void StartAudioCapture()
@@ -513,6 +524,10 @@ namespace test_speaker_stt_translate_tts
                 }
 
                 LogMessage("🎧 Запуск захвата аудио...");
+                LogMessage($"🔄 Состояние перед запуском: isCapturing={isCapturing}, isCollectingAudio={isCollectingAudio}");
+                
+                // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: сброс SmartAudioManager для корректного перезапуска
+                smartAudioManager?.ResetForNewStart();
                 
                 // Проверяем режим обработки
                 int processingMode = cbProcessingMode.SelectedIndex;
@@ -540,8 +555,14 @@ namespace test_speaker_stt_translate_tts
                 
                 audioLevelTimer?.Start();
                 
+                // КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: сброс всех состояний для корректного перезапуска
                 isCapturing = true;
+                isCollectingAudio = false; // ОБЯЗАТЕЛЬНО сбрасываем для нового цикла записи
                 audioBuffer.Clear();
+                audioLogCount = 0; // Сброс счетчика логов для отладки;
+                
+                LogMessage($"✅ Состояние после установки: isCapturing={isCapturing}, isCollectingAudio={isCollectingAudio}");
+                LogMessage($"📊 Буфер очищен, размер: {audioBuffer.Count}");
                 
                 // Update UI
                 btnStartCapture.Enabled = false;
@@ -560,62 +581,239 @@ namespace test_speaker_stt_translate_tts
             }
         }
 
-        private void StopAudioCapture()
+        private async Task StopAudioCapture()
         {
             try
             {
-                LogMessage("⏹️ Остановка захвата аудио...");
+                LogMessage("⏹️ ПОЛНАЯ ОСТАНОВКА СИСТЕМЫ...");
                 
+                // 1. Останавливаем захват аудио
                 isCapturing = false;
+                isCollectingAudio = false;
                 audioLevelTimer?.Stop();
                 
-                // Очищаем очередь в SmartAudioManager
+                // 2. Очищаем все буферы
+                audioBuffer.Clear();
+                LogMessage("🗑️ Аудио буфер очищен");
+                
+                // 3. Полная остановка и очистка SmartAudioManager
                 if (smartAudioManager != null)
                 {
                     smartAudioManager.ClearQueue();
-                    LogMessage("🗑️ Очередь обработки очищена");
+                    smartAudioManager.PauseCapture("full_stop");
+                    LogMessage("🗑️ SmartAudioManager: очередь очищена, захват приостановлен");
                 }
                 
-                // Остановка TTS если активен
+                // 4. Принудительная остановка всех TTS операций
                 if (speechSynthesizer != null)
                 {
-                    speechSynthesizer.SpeakAsyncCancelAll();
-                    LogMessage("🛑 TTS остановлен");
+                    try
+                    {
+                        speechSynthesizer.SpeakAsyncCancelAll();
+                        
+                        // Ждем небольшое время для завершения отмены
+                        await Task.Delay(200);
+                        
+                        LogMessage("🛑 Все TTS операции отменены");
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        LogMessage("🛑 TTS операции уже отменены");
+                    }
+                    catch (Exception ttsEx)
+                    {
+                        LogMessage($"❌ Ошибка остановки TTS: {ttsEx.Message}");
+                    }
                 }
                 
-                // Остановка WASAPI
-                wasapiCapture?.StopRecording();
-                wasapiCapture?.Dispose();
-                wasapiCapture = null;
+                // 5. Остановка и очистка потоковых процессоров (если есть)
+                // TODO: Добавить остановку StreamingAudioProcessor и StreamingResultManager
                 
-                // Остановка микрофона
-                waveInCapture?.StopRecording();
-                waveInCapture?.Dispose();
-                waveInCapture = null;
+                // 6. Остановка аудиоустройств
+                try
+                {
+                    if (wasapiCapture != null)
+                    {
+                        wasapiCapture.StopRecording();
+                        wasapiCapture.Dispose();
+                        wasapiCapture = null;
+                        LogMessage("🔇 WASAPI захват остановлен");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"⚠️ Ошибка остановки WASAPI: {ex.Message}");
+                }
                 
-                // Update UI
-                btnStartCapture.Enabled = true;
-                btnStopCapture.Enabled = false;
-                lblStatus.Text = "🔇 Готов к захвату";
-                lblStatus.ForeColor = Color.Blue;
-                progressAudioLevel.Value = 0;
-                lblAudioLevel.Text = "📊 Уровень: 0%";
+                try
+                {
+                    if (waveInCapture != null)
+                    {
+                        waveInCapture.StopRecording();
+                        waveInCapture.Dispose();
+                        waveInCapture = null;
+                        LogMessage("🎤 Микрофон остановлен");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"⚠️ Ошибка остановки микрофона: {ex.Message}");
+                }
                 
-                LogMessage("✅ Захват остановлен");
+                // 7. Принудительная сборка мусора для освобождения ресурсов
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                
+                // 8. Обновление UI
+                Invoke(() => {
+                    btnStartCapture.Enabled = true;
+                    btnStopCapture.Enabled = false;
+                    lblStatus.Text = "🔇 Полностью остановлен";
+                    lblStatus.ForeColor = Color.Red;
+                    progressAudioLevel.Value = 0;
+                    lblAudioLevel.Text = "📊 Уровень: 0%";
+                    txtRecognizedText.Text = "⏹️ Система остановлена";
+                    txtTranslatedText.Text = "⏹️ Очереди очищены";
+                });
+                
+                LogMessage("✅ СИСТЕМА ПОЛНОСТЬЮ ОСТАНОВЛЕНА И ОЧИЩЕНА");
+                LogMessage("🔄 Готов к новому запуску");
             }
             catch (Exception ex)
             {
-                LogMessage($"❌ Ошибка остановки захвата: {ex.Message}");
+                LogMessage($"❌ КРИТИЧЕСКАЯ ОШИБКА при остановке: {ex.Message}");
+                
+                // Экстренная очистка в случае ошибки
+                try
+                {
+                    isCapturing = false;
+                    isCollectingAudio = false;
+                    audioBuffer.Clear();
+                    wasapiCapture?.Dispose();
+                    waveInCapture?.Dispose();
+                    wasapiCapture = null;
+                    waveInCapture = null;
+                    
+                    Invoke(() => {
+                        btnStartCapture.Enabled = true;
+                        btnStopCapture.Enabled = false;
+                        lblStatus.Text = "❌ Ошибка остановки";
+                        lblStatus.ForeColor = Color.Red;
+                    });
+                }
+                catch
+                {
+                    // Если даже экстренная очистка не работает, просто логируем
+                    LogMessage("💀 Критическая ошибка: невозможно очистить ресурсы");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Экстренная остановка всех процессов (для критических ситуаций)
+        /// </summary>
+        private void EmergencyStop()
+        {
+            try
+            {
+                LogMessage("🚨 ЭКСТРЕННАЯ ОСТАНОВКА ВСЕХ ПРОЦЕССОВ!");
+                
+                // Останавливаем все флаги
+                isCapturing = false;
+                isCollectingAudio = false;
+                isStreamingMode = false;
+                
+                // Очищаем все буферы
+                audioBuffer.Clear();
+                
+                // Экстренная остановка SmartAudioManager
+                try 
+                { 
+                    smartAudioManager?.EmergencyStop(); 
+                    LogMessage("✅ SmartAudioManager экстренно остановлен");
+                } 
+                catch (Exception ex) 
+                { 
+                    LogMessage($"⚠️ Ошибка остановки SmartAudioManager: {ex.Message}"); 
+                }
+                
+                // Принудительная остановка всех аудио устройств
+                try { wasapiCapture?.StopRecording(); } catch { }
+                try { wasapiCapture?.Dispose(); } catch { }
+                try { waveInCapture?.StopRecording(); } catch { }
+                try { waveInCapture?.Dispose(); } catch { }
+                wasapiCapture = null;
+                waveInCapture = null;
+                
+                // Остановка всех TTS
+                try { speechSynthesizer?.SpeakAsyncCancelAll(); } catch { }
+                
+                // Остановка таймеров
+                try { audioLevelTimer?.Stop(); } catch { }
+                
+                // Принудительная сборка мусора
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                
+                LogMessage("✅ Экстренная остановка завершена");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"💀 Критическая ошибка экстренной остановки: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Полный сброс системы к начальному состоянию
+        /// </summary>
+        private void ResetSystemToInitialState()
+        {
+            try
+            {
+                LogMessage("🔄 СБРОС СИСТЕМЫ К НАЧАЛЬНОМУ СОСТОЯНИЮ...");
+                
+                // Экстренная остановка
+                EmergencyStop();
+                
+                // Сброс переменных состояния
+                currentAudioLevel = 0f;
+                lastVoiceActivity = DateTime.Now;
+                recordingStartTime = DateTime.Now;
+                
+                // Обновление UI к начальному состоянию
+                Invoke(() => {
+                    btnStartCapture.Enabled = true;
+                    btnStopCapture.Enabled = false;
+                    lblStatus.Text = "🔄 Система сброшена";
+                    lblStatus.ForeColor = Color.Green;
+                    progressAudioLevel.Value = 0;
+                    lblAudioLevel.Text = "📊 Уровень: 0%";
+                    txtRecognizedText.Text = "🔄 Готов к новому запуску";
+                    txtTranslatedText.Text = "🔄 Система сброшена";
+                    progressBar.Visible = false;
+                });
+                
+                LogMessage("✅ Система успешно сброшена и готова к работе");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка сброса системы: {ex.Message}");
             }
         }
 
         private void OnAudioDataAvailable(object? sender, WaveInEventArgs e)
         {
-            if (!isCapturing) return;
+            if (!isCapturing) 
+            {
+                LogMessage("⚠️ OnAudioDataAvailable: isCapturing=false, игнорируем данные");
+                return;
+            }
 
             // Проверяем, можно ли обрабатывать аудио (не активен TTS)
             if (smartAudioManager != null && !smartAudioManager.CanProcessAudio())
             {
+                LogMessage("⚠️ OnAudioDataAvailable: SmartAudioManager блокирует обработку");
                 // Во время TTS добавляем аудио в очередь для последующей обработки
                 if (isCollectingAudio && audioBuffer.Count > 0)
                 {
@@ -637,6 +835,13 @@ namespace test_speaker_stt_translate_tts
                 // Calculate audio level
                 float level = CalculateAudioLevel(e.Buffer, e.BytesRecorded);
                 currentAudioLevel = level;
+
+                // Логирование первых 5 уровней звука для отладки
+                if (audioLogCount < 5)
+                {
+                    LogMessage($"🔊 Аудиоуровень #{audioLogCount + 1}: {level:F3} (порог: {voiceThreshold:F3})");
+                    audioLogCount++;
+                }
 
                 // Voice activity detection
                 bool isVoiceDetected = level > voiceThreshold;
@@ -1448,7 +1653,20 @@ namespace test_speaker_stt_translate_tts
                 smartAudioManager?.NotifyTTSStarted();
                 
                 await Task.Run(() => {
-                    speechSynthesizer.Speak(text); // Используем синхронный Speak для корректной работы событий
+                    try
+                    {
+                        speechSynthesizer.Speak(text); // Используем синхронный Speak для корректной работы событий
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        LogMessage("🛑 TTS операция отменена");
+                        throw; // Пробрасываем исключение для обработки во внешнем catch
+                    }
+                    catch (Exception ex)
+                    {
+                        LogMessage($"❌ Внутренняя ошибка TTS: {ex.Message}");
+                        throw;
+                    }
                 });
                 
                 // Уведомляем SmartAudioManager о завершении TTS
@@ -1456,9 +1674,15 @@ namespace test_speaker_stt_translate_tts
                 
                 LogMessage("✅ Озвучивание завершено");
             }
+            catch (OperationCanceledException)
+            {
+                // Специальная обработка отмены TTS
+                smartAudioManager?.NotifyTTSCompleted();
+                LogMessage("🛑 TTS отменен пользователем");
+            }
             catch (Exception ex)
             {
-                // В случае ошибки также уведомляем о завершении TTS
+                // В случае других ошибок также уведомляем о завершении TTS
                 smartAudioManager?.NotifyTTSCompleted();
                 LogMessage($"❌ Ошибка озвучивания: {ex.Message}");
             }
@@ -1501,7 +1725,14 @@ namespace test_speaker_stt_translate_tts
                 SaveCurrentSettings();
                 
                 // Остановка захвата
-                StopAudioCapture();
+                try
+                {
+                    StopAudioCapture().Wait(3000); // Ждем максимум 3 секунды
+                }
+                catch (Exception stopEx)
+                {
+                    LogMessage($"❌ Ошибка остановки при закрытии: {stopEx.Message}");
+                }
                 
                 // Очистка ресурсов
                 speechSynthesizer?.Dispose();

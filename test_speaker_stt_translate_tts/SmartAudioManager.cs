@@ -122,6 +122,124 @@ namespace test_speaker_stt_translate_tts
         }
 
         /// <summary>
+        /// Полная остановка и сброс SmartAudioManager
+        /// </summary>
+        public void FullStop()
+        {
+            lock (lockObject)
+            {
+                try
+                {
+                    SafeLog("🛑 Выполняется полная остановка SmartAudioManager...");
+                    
+                    // Останавливаем все процессы
+                    isTTSActive = false;
+                    isCapturePaused = true;
+                    
+                    // Очищаем очередь
+                    ClearQueue();
+                    
+                    // Уведомляем об изменениях состояния
+                    TTSStateChanged?.Invoke(false);
+                    CaptureStateChanged?.Invoke(false);
+                    
+                    SafeLog("✅ SmartAudioManager полностью остановлен");
+                }
+                catch (Exception ex)
+                {
+                    SafeLog($"❌ Ошибка полной остановки SmartAudioManager: {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Сброс состояния для нового запуска
+        /// </summary>
+        public void ResetForNewStart()
+        {
+            lock (lockObject)
+            {
+                try
+                {
+                    SafeLog("🔄 Сброс SmartAudioManager для нового запуска...");
+                    
+                    // Сбрасываем все блокировки
+                    isTTSActive = false;
+                    isCapturePaused = false;
+                    
+                    // Очищаем очередь (на всякий случай)
+                    ClearQueue();
+                    
+                    // Создаем новый токен отмены
+                    cancellationTokenSource?.Cancel();
+                    cancellationTokenSource = new CancellationTokenSource();
+                    
+                    // Перезапускаем процессор очереди
+                    StartQueueProcessor();
+                    
+                    SafeLog("✅ SmartAudioManager готов к новому запуску");
+                }
+                catch (Exception ex)
+                {
+                    SafeLog($"❌ Ошибка сброса SmartAudioManager: {ex.Message}");
+                }
+            }
+        }
+
+        /// <summary>
+        /// Экстренная остановка со сбросом состояния
+        /// </summary>
+        public void EmergencyStop()
+        {
+            try
+            {
+                SafeLog("🚨 Экстренная остановка SmartAudioManager!");
+                
+                // Принудительно сбрасываем состояние TTS
+                lock (lockObject)
+                {
+                    if (isTTSActive)
+                    {
+                        isTTSActive = false;
+                        isCapturePaused = false;
+                        SafeLog("🛑 Принудительный сброс состояния TTS");
+                        
+                        // Уведомляем о принудительном завершении
+                        try
+                        {
+                            TTSStateChanged?.Invoke(false);
+                            CaptureStateChanged?.Invoke(false);
+                        }
+                        catch { } // Игнорируем ошибки уведомлений
+                    }
+                }
+                
+                // Отменяем токен отмены, чтобы остановить все задачи
+                cancellationTokenSource?.Cancel();
+                
+                // Полная остановка
+                FullStop();
+                
+                // Ждем завершения задач с таймаутом
+                queueProcessingTask?.Wait(2000);
+                
+                SafeLog("✅ Экстренная остановка SmartAudioManager завершена");
+            }
+            catch (Exception ex)
+            {
+                SafeLog($"💀 Критическая ошибка экстренной остановки: {ex.Message}");
+                
+                // В критической ситуации принудительно сбрасываем все
+                try
+                {
+                    isTTSActive = false;
+                    isCapturePaused = false;
+                }
+                catch { }
+            }
+        }
+
+        /// <summary>
         /// Проверка, можно ли обрабатывать аудио
         /// </summary>
         public bool CanProcessAudio()

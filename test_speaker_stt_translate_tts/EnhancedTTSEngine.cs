@@ -143,20 +143,33 @@ namespace test_speaker_stt_translate_tts
                     {
                         speechSynthesizer.Speak(text);
                     }
+                    catch (OperationCanceledException)
+                    {
+                        AudioAnalysisUtils.SafeDebugLog("🛑 TTS операция отменена");
+                        throw; // Пробрасываем для обработки во внешнем catch
+                    }
                     catch (Exception ex)
                     {
-                        AudioAnalysisUtils.SafeDebugLog($"❌ Ошибка во время TTS: {ex.Message}");
+                        AudioAnalysisUtils.SafeDebugLog($"❌ Внутренняя ошибка TTS: {ex.Message}");
                         throw;
                     }
                 });
 
                 return true;
             }
+            catch (OperationCanceledException)
+            {
+                AudioAnalysisUtils.SafeDebugLog("🛑 TTS отменен пользователем");
+                isTTSActive = false;
+                audioManager?.NotifyTTSCompleted(); // Уведомляем об отмене
+                return false;
+            }
             catch (Exception ex)
             {
                 AudioAnalysisUtils.SafeDebugLog($"❌ Ошибка TTS: {ex.Message}");
                 TTSError?.Invoke($"Ошибка TTS: {ex.Message}");
                 isTTSActive = false;
+                audioManager?.NotifyTTSCompleted(); // Уведомляем об ошибке
                 return false;
             }
         }
@@ -223,13 +236,29 @@ namespace test_speaker_stt_translate_tts
                 if (speechSynthesizer != null && isTTSActive)
                 {
                     speechSynthesizer.SpeakAsyncCancelAll();
+                    
+                    // Ждем небольшое время для завершения отмены
+                    Task.Delay(200).Wait();
+                    
                     isTTSActive = false;
-                    AudioAnalysisUtils.SafeDebugLog("🛑 TTS остановлен");
+                    audioManager?.NotifyTTSCompleted(); // Уведомляем об остановке
+                    AudioAnalysisUtils.SafeDebugLog("🛑 TTS остановлен принудительно");
+                }
+                else if (speechSynthesizer != null)
+                {
+                    // Остановка даже если статус неактивен (на всякий случай)
+                    speechSynthesizer.SpeakAsyncCancelAll();
+                    isTTSActive = false;
+                    audioManager?.NotifyTTSCompleted();
+                    AudioAnalysisUtils.SafeDebugLog("🛑 TTS остановлен (форсированно)");
                 }
             }
             catch (Exception ex)
             {
                 AudioAnalysisUtils.SafeDebugLog($"❌ Ошибка остановки TTS: {ex.Message}");
+                // Всегда сбрасываем состояние даже при ошибке
+                isTTSActive = false;
+                audioManager?.NotifyTTSCompleted();
             }
         }
 
