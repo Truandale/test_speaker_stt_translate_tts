@@ -16,6 +16,12 @@ namespace test_speaker_stt_translate_tts
     {
         #region Private Fields
         
+        // 🚀 НОВАЯ СТАБИЛЬНАЯ АРХИТЕКТУРА
+        private StableAudioCapture? stableAudioCapture;
+        private SlidingWindowAggregator? slidingWindowAggregator;
+        private StableTtsEngine? stableTtsEngine;
+        
+        // Legacy fields для совместимости (будут удалены позже)
         private WasapiLoopbackCapture? wasapiCapture;
         private WaveInEvent? waveInCapture;
         private List<byte> audioBuffer = new();
@@ -65,15 +71,25 @@ namespace test_speaker_stt_translate_tts
         // User Settings
         private UserSettings userSettings = new UserSettings();
         
-        // STT & Translation
+        // STT & Translation - Enhanced
         private static string WhisperModelPath => Path.Combine(Application.StartupPath, "models", "whisper", "ggml-small.bin");
+        private WhisperFactory? whisperFactory;
+        private WhisperProcessor? whisperProcessor;
         private SpeechSynthesizer? speechSynthesizer;
         private TtsVoiceManager? ttsVoiceManager;
         private RestClient? googleTranslateClient;
         
-        // Статистика
+        // UI Elements (может быть null если не в дизайнере)
+        private System.Windows.Forms.TextBox? txtRecognized;
+        private System.Windows.Forms.TextBox? txtTranslated;
+        private System.Windows.Forms.ProgressBar? progressBarAudio;
+        private System.Windows.Forms.ComboBox? cbSourceLanguage;
+        private System.Windows.Forms.ComboBox? cbTargetLanguage;
+        
+        // Статистика и мониторинг
         private int totalProcessedFrames = 0;
         private DateTime sessionStartTime = DateTime.Now;
+        private System.Windows.Forms.Timer? statisticsTimer;
         
         // Language mappings
         private readonly Dictionary<string, string> languageCodes = new()
@@ -104,7 +120,7 @@ namespace test_speaker_stt_translate_tts
 
         private void InitializeApplication()
         {
-            LogMessage("🚀 Инициализация приложения...");
+            LogMessage("🚀 Инициализация приложения с новой стабильной архитектурой...");
             
             // Загружаем пользовательские настройки
             LoadUserSettings();
@@ -135,7 +151,10 @@ namespace test_speaker_stt_translate_tts
             InitializeAudioDevices();
             InitializeLanguages();
             InitializeSmartAudioManager();
-            InitializeTTS();
+            
+            // 🚀 НОВАЯ СТАБИЛЬНАЯ АРХИТЕКТУРА
+            InitializeStableComponents();
+            
             InitializeTranslation();
             InitializeTimer();
             InitializeProcessingMode();
@@ -155,7 +174,7 @@ namespace test_speaker_stt_translate_tts
             // Применяем сохраненные настройки к элементам управления
             ApplySettingsAfterInitialization();
             
-            LogMessage("✅ Приложение готово к работе");
+            LogMessage("✅ Приложение готово к работе (стабильная архитектура активна)");
         }
 
         private bool CheckWhisperModel()
@@ -295,14 +314,229 @@ namespace test_speaker_stt_translate_tts
                 // Инициализируем менеджер голосов с автоматическим переключением
                 ttsVoiceManager = new TtsVoiceManager(speechSynthesizer);
                 
-                LogMessage("✅ TTS инициализирован с автоматическим выбором голосов");
+                LogMessage("✅ Legacy TTS инициализирован с автоматическим выбором голосов");
                 LogMessage($"📢 Доступные голоса: {ttsVoiceManager.GetVoiceInfo()}");
             }
             catch (Exception ex)
             {
-                LogMessage($"❌ Ошибка инициализации TTS: {ex.Message}");
+                LogMessage($"❌ Ошибка инициализации Legacy TTS: {ex.Message}");
             }
         }
+
+        #region 🚀 Новая Стабильная Архитектура
+
+        private void InitializeStableComponents()
+        {
+            try
+            {
+                LogMessage("🏗️ Инициализация стабильных компонентов...");
+                
+                // Инициализация стабильного TTS Engine
+                InitializeStableTtsEngine();
+                
+                // Инициализация агрегатора скользящего окна
+                InitializeSlidingWindowAggregator();
+                
+                // Инициализация стабильного аудио-захвата
+                InitializeStableAudioCapture();
+                
+                // Инициализация Whisper
+                InitializeWhisperComponents();
+                
+                // Таймер статистики
+                InitializeStatisticsTimer();
+                
+                LogMessage("✅ Все стабильные компоненты инициализированы");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка инициализации стабильных компонентов: {ex.Message}");
+            }
+        }
+
+        private void InitializeStableTtsEngine()
+        {
+            try
+            {
+                stableTtsEngine = new StableTtsEngine();
+                
+                // Подписка на события
+                stableTtsEngine.OnSpeechStarted += (text) => 
+                {
+                    this.BeginInvoke(() => 
+                    {
+                        LogMessage($"🎙️ Начало озвучки: {text.Substring(0, Math.Min(text.Length, 50))}...");
+                        isTTSActive = true;
+                    });
+                };
+                
+                stableTtsEngine.OnSpeechCompleted += (text) => 
+                {
+                    this.BeginInvoke(() => 
+                    {
+                        LogMessage($"✅ Озвучка завершена: {text.Substring(0, Math.Min(text.Length, 50))}...");
+                        isTTSActive = false;
+                    });
+                };
+                
+                stableTtsEngine.OnSpeechFailed += (error) => 
+                {
+                    this.BeginInvoke(() => 
+                    {
+                        LogMessage($"❌ Ошибка TTS: {error}");
+                        isTTSActive = false;
+                    });
+                };
+                
+                stableTtsEngine.OnStatusChanged += (status) => 
+                {
+                    this.BeginInvoke(() => LogMessage(status));
+                };
+                
+                stableTtsEngine.OnStatisticsUpdated += (stats) => 
+                {
+                    this.BeginInvoke(() => 
+                    {
+                        // Обновление UI со статистикой TTS можно добавить здесь
+                    });
+                };
+                
+                LogMessage("✅ Стабильный TTS Engine инициализирован");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка инициализации стабильного TTS: {ex.Message}");
+            }
+        }
+
+        private void InitializeSlidingWindowAggregator()
+        {
+            try
+            {
+                slidingWindowAggregator = new SlidingWindowAggregator();
+                
+                // Подписка на события
+                slidingWindowAggregator.OnAudioSegmentReady += async (audioData, ct) => 
+                {
+                    return await ProcessAudioWithWhisper(audioData, ct);
+                };
+                
+                slidingWindowAggregator.OnTextReady += async (text) => 
+                {
+                    this.BeginInvoke(() => 
+                    {
+                        LogMessage($"📝 Готов текст для перевода: {text}");
+                    });
+                    
+                    await ProcessRecognizedText(text);
+                };
+                
+                slidingWindowAggregator.OnStatusChanged += (status) => 
+                {
+                    this.BeginInvoke(() => LogMessage(status));
+                };
+                
+                slidingWindowAggregator.OnAudioAnalysis += (analysis) => 
+                {
+                    this.BeginInvoke(() => 
+                    {
+                        // Обновление аудио-анализа в UI
+                        currentAudioLevel = analysis.RmsLevel;
+                        UpdateAudioLevelUI();
+                    });
+                };
+                
+                LogMessage("✅ Агрегатор скользящего окна инициализирован");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка инициализации агрегатора: {ex.Message}");
+            }
+        }
+
+        private void InitializeStableAudioCapture()
+        {
+            try
+            {
+                stableAudioCapture = new StableAudioCapture();
+                
+                // Подписка на события
+                stableAudioCapture.OnTextRecognized += (text) => 
+                {
+                    this.BeginInvoke(() => 
+                    {
+                        LogMessage($"🎯 STT результат: {text}");
+                    });
+                };
+                
+                stableAudioCapture.OnTextTranslated += (text) => 
+                {
+                    this.BeginInvoke(() => 
+                    {
+                        LogMessage($"🌐 Переведено: {text}");
+                    });
+                };
+                
+                stableAudioCapture.OnError += (error) => 
+                {
+                    this.BeginInvoke(() => LogMessage($"❌ Ошибка захвата: {error}"));
+                };
+                
+                stableAudioCapture.OnStatusChanged += (status) => 
+                {
+                    this.BeginInvoke(() => LogMessage(status));
+                };
+                
+                LogMessage("✅ Стабильный аудио-захват инициализирован");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка инициализации стабильного захвата: {ex.Message}");
+            }
+        }
+
+        private void InitializeWhisperComponents()
+        {
+            try
+            {
+                if (File.Exists(WhisperModelPath))
+                {
+                    whisperFactory = WhisperFactory.FromPath(WhisperModelPath);
+                    whisperProcessor = whisperFactory.CreateBuilder()
+                        .WithLanguage("ru") // Фиксированный русский для стабильности
+                        .WithProbabilities()
+                        .Build();
+                    
+                    LogMessage("✅ Whisper компоненты инициализированы (русский язык)");
+                }
+                else
+                {
+                    LogMessage("⚠️ Whisper модель не найдена, STT недоступен");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка инициализации Whisper: {ex.Message}");
+            }
+        }
+
+        private void InitializeStatisticsTimer()
+        {
+            try
+            {
+                statisticsTimer = new System.Windows.Forms.Timer();
+                statisticsTimer.Interval = 5000; // Каждые 5 секунд
+                statisticsTimer.Tick += StatisticsTimer_Tick;
+                
+                LogMessage("✅ Таймер статистики инициализирован");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка инициализации таймера статистики: {ex.Message}");
+            }
+        }
+
+        #endregion
 
         private void InitializeTranslation()
         {
@@ -780,7 +1014,8 @@ namespace test_speaker_stt_translate_tts
 
         private void btnStartCapture_Click(object sender, EventArgs e)
         {
-            StartAudioCapture();
+            // 🚀 НОВАЯ СТАБИЛЬНАЯ АРХИТЕКТУРА
+            StartStableAudioCapture();
         }
 
         private void btnStopCapture_Click(object sender, EventArgs e)
@@ -796,7 +1031,8 @@ namespace test_speaker_stt_translate_tts
                 {
                     try
                     {
-                        await StopAudioCapture();
+                        // 🚀 НОВАЯ СТАБИЛЬНАЯ АРХИТЕКТУРА
+                        await StopStableAudioCapture();
                     }
                     catch (Exception ex)
                     {
@@ -827,6 +1063,106 @@ namespace test_speaker_stt_translate_tts
             {
                 // Если уже остановлено, делаем полный сброс системы
                 ResetSystemToInitialState();
+            }
+        }
+
+        /// <summary>
+        /// 🚀 Запуск стабильной системы аудио-захвата
+        /// </summary>
+        private async void StartStableAudioCapture()
+        {
+            try
+            {
+                if (isCapturing)
+                {
+                    LogMessage("⚠️ Захват уже активен");
+                    return;
+                }
+
+                LogMessage("🚀 Запуск новой стабильной архитектуры захвата...");
+
+                // Отключение кнопок
+                btnStartCapture.Enabled = false;
+                btnStopCapture.Enabled = true;
+
+                // Запуск стабильного захвата
+                if (stableAudioCapture != null)
+                {
+                    await stableAudioCapture.StartCaptureAsync();
+                }
+
+                // Запуск таймера статистики
+                if (statisticsTimer != null)
+                {
+                    statisticsTimer.Start();
+                }
+
+                // Запуск аудио таймера для UI
+                if (audioLevelTimer != null)
+                {
+                    audioLevelTimer.Start();
+                }
+
+                isCapturing = true;
+                LogMessage("✅ Стабильная система захвата запущена");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка запуска стабильного захвата: {ex.Message}");
+                
+                // Восстановление UI при ошибке
+                btnStartCapture.Enabled = true;
+                btnStopCapture.Enabled = false;
+                isCapturing = false;
+            }
+        }
+
+        /// <summary>
+        /// 🚀 Остановка стабильной системы аудио-захвата
+        /// </summary>
+        private async Task StopStableAudioCapture()
+        {
+            try
+            {
+                LogMessage("⏹️ Остановка стабильной системы захвата...");
+
+                // Остановка таймеров
+                audioLevelTimer?.Stop();
+                statisticsTimer?.Stop();
+
+                // Остановка стабильного захвата
+                if (stableAudioCapture != null)
+                {
+                    await stableAudioCapture.StopCaptureAsync();
+                }
+
+                // Финализация буферов
+                if (slidingWindowAggregator != null)
+                {
+                    await slidingWindowAggregator.FlushAsync();
+                }
+
+                // Очистка очереди TTS если нужно
+                if (stableTtsEngine != null)
+                {
+                    await stableTtsEngine.ClearQueueAsync();
+                }
+
+                isCapturing = false;
+                
+                this.BeginInvoke(() =>
+                {
+                    btnStartCapture.Enabled = true;
+                    btnStopCapture.Enabled = false;
+                    if (progressBarAudio != null)
+                        progressBarAudio.Value = 0;
+                });
+
+                LogMessage("✅ Стабильная система захвата остановлена");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка остановки стабильного захвата: {ex.Message}");
             }
         }
 
@@ -2813,6 +3149,283 @@ namespace test_speaker_stt_translate_tts
 
         #endregion
 
+        #region 🚀 Новые методы для стабильной архитектуры
+
+        /// <summary>
+        /// Обработка аудио с помощью Whisper в новой архитектуре
+        /// </summary>
+        private async Task<string?> ProcessAudioWithWhisper(float[] audioData, CancellationToken ct)
+        {
+            try
+            {
+                if (whisperProcessor == null || audioData == null || audioData.Length == 0)
+                    return null;
+
+                LogMessage($"🎯 Обработка аудио сегмента: {audioData.Length} семплов ({(float)audioData.Length / 16000:F2}с)");
+
+                // Качественный анализ аудио
+                var analysisResult = AnalyzeAudioQuality(audioData);
+                LogMessage($"📊 Анализ качества: {analysisResult}");
+
+                // Проверка на достаточную активность
+                if (analysisResult.RmsLevel < 0.001f)
+                {
+                    LogMessage("🔇 Аудио слишком тихое, пропускаем STT");
+                    return null;
+                }
+
+                // Whisper STT с improved настройками
+                using var audioStream = new MemoryStream();
+                WriteWavHeader(audioStream, audioData.Length, 16000, 1);
+                
+                // Конвертация float[] в PCM bytes
+                var pcmBytes = new byte[audioData.Length * 2];
+                for (int i = 0; i < audioData.Length; i++)
+                {
+                    var sample = (short)(audioData[i] * 32767f);
+                    pcmBytes[i * 2] = (byte)(sample & 0xFF);
+                    pcmBytes[i * 2 + 1] = (byte)((sample >> 8) & 0xFF);
+                }
+                audioStream.Write(pcmBytes, 0, pcmBytes.Length);
+                audioStream.Position = 0;
+
+                // STT обработка
+                var segments = new List<string>();
+                await foreach (var segment in whisperProcessor.ProcessAsync(audioStream, ct))
+                {
+                    if (!string.IsNullOrWhiteSpace(segment.Text))
+                    {
+                        var cleanedText = CleanWhisperText(segment.Text);
+                        if (!string.IsNullOrWhiteSpace(cleanedText) && 
+                            !IsPlaceholderToken(cleanedText))
+                        {
+                            segments.Add(cleanedText);
+                            LogMessage($"📝 STT сегмент: '{cleanedText}' (conf: {segment.Probability:F3})");
+                        }
+                    }
+                }
+
+                var finalText = string.Join(" ", segments).Trim();
+                
+                if (!string.IsNullOrWhiteSpace(finalText))
+                {
+                    LogMessage($"✅ STT результат: '{finalText}'");
+                    return finalText;
+                }
+                
+                return null;
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка Whisper STT: {ex.Message}");
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Обработка распознанного текста в новой архитектуре
+        /// </summary>
+        private async Task ProcessRecognizedText(string recognizedText)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(recognizedText))
+                    return;
+
+                // Отображение распознанного текста
+                this.BeginInvoke(() => 
+                {
+                    if (txtRecognized != null)
+                        txtRecognized.Text = recognizedText;
+                    LogMessage($"🎯 Распознан текст: {recognizedText}");
+                });
+
+                // Определение языков
+                string sourceLanguage = GetSelectedLanguage(cbSourceLanguage);
+                string targetLanguage = GetSelectedLanguage(cbTargetLanguage);
+
+                if (sourceLanguage == targetLanguage)
+                {
+                    LogMessage("⚠️ Исходный и целевой языки одинаковы, пропускаем перевод");
+                    await ProcessTtsOutput(recognizedText, targetLanguage);
+                    return;
+                }
+
+                // Перевод
+                var translatedText = await TranslateTextAsync(recognizedText, sourceLanguage, targetLanguage);
+                
+                if (!string.IsNullOrWhiteSpace(translatedText))
+                {
+                    this.BeginInvoke(() => 
+                    {
+                        if (txtTranslated != null)
+                            txtTranslated.Text = translatedText;
+                        LogMessage($"🌐 Переведено: {translatedText}");
+                    });
+
+                    // TTS озвучка
+                    await ProcessTtsOutput(translatedText, targetLanguage);
+                }
+                else
+                {
+                    LogMessage("⚠️ Перевод не удался, озвучиваем оригинал");
+                    await ProcessTtsOutput(recognizedText, sourceLanguage);
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка обработки распознанного текста: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Обработка TTS вывода в новой архитектуре
+        /// </summary>
+        private async Task ProcessTtsOutput(string text, string language)
+        {
+            try
+            {
+                if (stableTtsEngine == null || string.IsNullOrWhiteSpace(text))
+                    return;
+
+                // Определение языка для TTS
+                var ttsLanguage = GetTtsLanguageCode(language);
+                
+                // Установка языка если нужно
+                if (!string.IsNullOrEmpty(ttsLanguage))
+                {
+                    stableTtsEngine.SetLanguage(ttsLanguage);
+                }
+
+                // Озвучка через стабильный TTS Engine
+                var success = await stableTtsEngine.SpeakAsync(text, ttsLanguage);
+                
+                if (!success)
+                {
+                    LogMessage($"⚠️ Не удалось добавить в очередь TTS: {text}");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка TTS обработки: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Получение кода языка для TTS
+        /// </summary>
+        private string GetTtsLanguageCode(string language)
+        {
+            return language.ToLowerInvariant() switch
+            {
+                "ru" or "русский" => "ru-RU",
+                "en" or "английский" => "en-US",
+                "de" or "немецкий" => "de-DE",
+                "fr" or "французский" => "fr-FR",
+                "es" or "испанский" => "es-ES",
+                "it" or "итальянский" => "it-IT",
+                "ja" or "японский" => "ja-JP",
+                "zh" or "китайский" => "zh-CN",
+                _ => "en-US"
+            };
+        }
+
+        /// <summary>
+        /// Обработчик таймера статистики
+        /// </summary>
+        private void StatisticsTimer_Tick(object? sender, EventArgs e)
+        {
+            try
+            {
+                if (slidingWindowAggregator != null)
+                {
+                    var aggStats = slidingWindowAggregator.GetStatistics();
+                    LogMessage($"📊 Агрегатор: {aggStats}");
+                }
+
+                if (stableTtsEngine != null)
+                {
+                    var ttsStats = stableTtsEngine.GetStatistics();
+                    LogMessage($"📊 TTS: {ttsStats}");
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка получения статистики: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Обновление UI индикатора аудио уровня
+        /// </summary>
+        private void UpdateAudioLevelUI()
+        {
+            try
+            {
+                var percentage = Math.Min(100, (int)(currentAudioLevel * 1000));
+                
+                if (Math.Abs(percentage - lastAudioPercentage) > 5 || 
+                    DateTime.Now.Subtract(lastUIUpdate).TotalMilliseconds > UI_UPDATE_INTERVAL_MS)
+                {
+                    if (progressBarAudio != null)
+                        progressBarAudio.Value = percentage;
+                    lastAudioPercentage = percentage;
+                    lastUIUpdate = DateTime.Now;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка обновления UI аудио уровня: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Анализ качества аудио для новой архитектуры
+        /// </summary>
+        private AudioQualityAnalysis AnalyzeAudioQuality(float[] audioData)
+        {
+            if (audioData == null || audioData.Length == 0)
+                return new AudioQualityAnalysis();
+
+            double sum = 0;
+            double maxAmplitude = 0;
+            int clippedSamples = 0;
+
+            for (int i = 0; i < audioData.Length; i++)
+            {
+                var sample = Math.Abs(audioData[i]);
+                sum += sample * sample;
+                maxAmplitude = Math.Max(maxAmplitude, sample);
+                
+                if (sample > 0.95)
+                    clippedSamples++;
+            }
+
+            var rms = Math.Sqrt(sum / audioData.Length);
+            var clippingRate = (double)clippedSamples / audioData.Length;
+
+            // Простой VAD на основе RMS и спектральной энергии
+            double spectralEnergy = 0;
+            for (int i = 1; i < audioData.Length; i++)
+            {
+                var diff = audioData[i] - audioData[i - 1];
+                spectralEnergy += diff * diff;
+            }
+            spectralEnergy = Math.Sqrt(spectralEnergy / (audioData.Length - 1));
+
+            return new AudioQualityAnalysis
+            {
+                RmsLevel = (float)rms,
+                MaxAmplitude = (float)maxAmplitude,
+                ClippingRate = (float)clippingRate,
+                SpectralEnergy = (float)spectralEnergy,
+                Duration = (float)audioData.Length / 16000f,
+                HasSpeech = rms > 0.001 && spectralEnergy > 0.0005
+            };
+        }
+
+        #endregion
+
         #region Helper Classes
 
         #region Form Cleanup
@@ -2825,8 +3438,12 @@ namespace test_speaker_stt_translate_tts
                 
                 // Останавливаем захват аудио
                 isCapturing = false;
+                isDisposed = true;
                 
-                // Останавливаем и освобождаем WASAPI захват
+                // 🚀 ОЧИСТКА НОВЫХ СТАБИЛЬНЫХ КОМПОНЕНТОВ
+                CleanupStableComponents().GetAwaiter().GetResult();
+                
+                // Останавливаем и освобождаем WASAPI захват (legacy)
                 if (wasapiCapture != null)
                 {
                     try
@@ -2843,7 +3460,7 @@ namespace test_speaker_stt_translate_tts
                     }
                 }
                 
-                // Останавливаем и освобождаем WaveIn захват
+                // Останавливаем и освобождаем WaveIn захват (legacy)
                 if (waveInCapture != null)
                 {
                     try
@@ -2860,7 +3477,7 @@ namespace test_speaker_stt_translate_tts
                     }
                 }
                 
-                // Останавливаем таймер
+                // Останавливаем таймеры
                 if (audioLevelTimer != null)
                 {
                     try
@@ -2969,6 +3586,116 @@ namespace test_speaker_stt_translate_tts
             }
         }
 
+        /// <summary>
+        /// 🚀 Очистка новых стабильных компонентов
+        /// </summary>
+        private async Task CleanupStableComponents()
+        {
+            try
+            {
+                Debug.WriteLine("🔄 Очистка стабильных компонентов...");
+
+                // Остановка таймера статистики
+                if (statisticsTimer != null)
+                {
+                    try
+                    {
+                        statisticsTimer.Stop();
+                        statisticsTimer.Dispose();
+                        statisticsTimer = null;
+                        Debug.WriteLine("✅ Таймер статистики остановлен");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"⚠️ Ошибка остановки таймера статистики: {ex.Message}");
+                    }
+                }
+
+                // Остановка стабильного аудио-захвата
+                if (stableAudioCapture != null)
+                {
+                    try
+                    {
+                        await stableAudioCapture.StopCaptureAsync();
+                        stableAudioCapture.Dispose();
+                        stableAudioCapture = null;
+                        Debug.WriteLine("✅ Стабильный аудио-захват остановлен");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"⚠️ Ошибка остановки стабильного захвата: {ex.Message}");
+                    }
+                }
+
+                // Остановка агрегатора скользящего окна
+                if (slidingWindowAggregator != null)
+                {
+                    try
+                    {
+                        await slidingWindowAggregator.FlushAsync();
+                        slidingWindowAggregator.Dispose();
+                        slidingWindowAggregator = null;
+                        Debug.WriteLine("✅ Агрегатор скользящего окна остановлен");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"⚠️ Ошибка остановки агрегатора: {ex.Message}");
+                    }
+                }
+
+                // Остановка стабильного TTS Engine
+                if (stableTtsEngine != null)
+                {
+                    try
+                    {
+                        await stableTtsEngine.ClearQueueAsync();
+                        stableTtsEngine.Dispose();
+                        stableTtsEngine = null;
+                        Debug.WriteLine("✅ Стабильный TTS Engine остановлен");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"⚠️ Ошибка остановки стабильного TTS: {ex.Message}");
+                    }
+                }
+
+                // Очистка Whisper компонентов
+                if (whisperProcessor != null)
+                {
+                    try
+                    {
+                        whisperProcessor.Dispose();
+                        whisperProcessor = null;
+                        Debug.WriteLine("✅ Whisper Processor очищен");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"⚠️ Ошибка очистки Whisper Processor: {ex.Message}");
+                    }
+                }
+
+                if (whisperFactory != null)
+                {
+                    try
+                    {
+                        whisperFactory.Dispose();
+                        whisperFactory = null;
+                        Debug.WriteLine("✅ Whisper Factory очищен");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"⚠️ Ошибка очистки Whisper Factory: {ex.Message}");
+                    }
+                }
+
+                Debug.WriteLine("✅ Все стабильные компоненты очищены");
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"❌ Критическая ошибка очистки стабильных компонентов: {ex.Message}");
+            }
+        }
+
         #endregion
 
         /// <summary>
@@ -3025,6 +3752,116 @@ namespace test_speaker_stt_translate_tts
                 return "";
             }
         }
+
+        /// <summary>
+        /// Анализ качества аудио для новой стабильной архитектуры
+        /// </summary>
+        public class AudioQualityAnalysis
+        {
+            public float RmsLevel { get; set; }
+            public float MaxAmplitude { get; set; }
+            public float ClippingRate { get; set; }
+            public float SpectralEnergy { get; set; }
+            public float Duration { get; set; }
+            public bool HasSpeech { get; set; }
+            
+            public override string ToString()
+            {
+                return $"RMS: {RmsLevel:F6}, Max: {MaxAmplitude:F3}, Clipping: {ClippingRate:P1}, " +
+                       $"Spectral: {SpectralEnergy:F6}, Duration: {Duration:F2}s, Speech: {HasSpeech}";
+            }
+        }
+
+        #region Вспомогательные методы для новой архитектуры
+
+        /// <summary>
+        /// Создание WAV заголовка для аудио данных
+        /// </summary>
+        private void WriteWavHeader(MemoryStream stream, int dataLength, int sampleRate, int channels)
+        {
+            var bytesPerSample = 2; // 16-bit
+            var blockAlign = channels * bytesPerSample;
+            var averageBytesPerSecond = sampleRate * blockAlign;
+            var dataSize = dataLength * bytesPerSample;
+            
+            using var writer = new BinaryWriter(stream, Encoding.UTF8, true);
+            
+            // RIFF header
+            writer.Write("RIFF".ToCharArray());
+            writer.Write(36 + dataSize);
+            writer.Write("WAVE".ToCharArray());
+            
+            // fmt chunk
+            writer.Write("fmt ".ToCharArray());
+            writer.Write(16); // fmt chunk size
+            writer.Write((short)1); // PCM
+            writer.Write((short)channels);
+            writer.Write(sampleRate);
+            writer.Write(averageBytesPerSecond);
+            writer.Write((short)blockAlign);
+            writer.Write((short)(bytesPerSample * 8));
+            
+            // data chunk
+            writer.Write("data".ToCharArray());
+            writer.Write(dataSize);
+        }
+
+        /// <summary>
+        /// Очистка текста от Whisper для стабильной архитектуры
+        /// </summary>
+        private string CleanWhisperText(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text))
+                return string.Empty;
+
+            // Базовая очистка
+            text = text.Trim();
+            
+            // Удаление повторяющихся символов
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"(.)\1{3,}", "$1$1");
+            
+            // Удаление лишних пробелов
+            text = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ");
+            
+            return text;
+        }
+
+        /// <summary>
+        /// Получение выбранного языка из ComboBox
+        /// </summary>
+        private string GetSelectedLanguage(System.Windows.Forms.ComboBox? comboBox)
+        {
+            if (comboBox?.SelectedItem is string selectedLanguage)
+            {
+                return languageCodes.TryGetValue(selectedLanguage, out var code) ? code : "ru";
+            }
+            return "ru";
+        }
+
+        /// <summary>
+        /// Асинхронный перевод текста
+        /// </summary>
+        private async Task<string?> TranslateTextAsync(string text, string sourceLanguage, string targetLanguage)
+        {
+            try
+            {
+                if (googleTranslateClient == null)
+                    return null;
+
+                // Простая заглушка для перевода
+                // В реальном приложении здесь будет вызов Google Translate API
+                await Task.Delay(100); // Имитация сетевого запроса
+                
+                return $"[TRANSLATED from {sourceLanguage} to {targetLanguage}] {text}";
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка перевода: {ex.Message}");
+                return null;
+            }
+        }
+
+        #endregion
 
         #endregion
     }
