@@ -55,6 +55,11 @@
             lblStats = new Label();
             chkInfiniteTests = new CheckBox();
             btnTestingGuide = new Button();
+            btnDiagnostics = new Button();
+            btnPerfDiag = new Button();
+            btnAdvancedDiag = new Button();
+            btnTextFilterValidation = new Button();
+            btnAllDiag = new Button();
             ((System.ComponentModel.ISupportInitialize)numThreshold).BeginInit();
             SuspendLayout();
             // 
@@ -362,6 +367,72 @@
             btnTestingGuide.UseVisualStyleBackColor = false;
             btnTestingGuide.Click += btnTestingGuide_Click;
             // 
+            // btnDiagnostics
+            // 
+            btnDiagnostics.BackColor = Color.LightBlue;
+            btnDiagnostics.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            btnDiagnostics.Location = new Point(420, 12);
+            btnDiagnostics.Margin = new Padding(4, 3, 4, 3);
+            btnDiagnostics.Name = "btnDiagnostics";
+            btnDiagnostics.Size = new Size(120, 30);
+            btnDiagnostics.TabIndex = 27;
+            btnDiagnostics.Text = "🔍 Диагностика";
+            btnDiagnostics.UseVisualStyleBackColor = false;
+            btnDiagnostics.Click += btnDiagnostics_Click;
+            // 
+            // btnPerfDiag
+            // 
+            btnPerfDiag.BackColor = Color.LightYellow;
+            btnPerfDiag.Font = new Font("Segoe UI", 8F, FontStyle.Bold);
+            btnPerfDiag.Location = new Point(550, 12);
+            btnPerfDiag.Margin = new Padding(4, 3, 4, 3);
+            btnPerfDiag.Name = "btnPerfDiag";
+            btnPerfDiag.Size = new Size(100, 30);
+            btnPerfDiag.TabIndex = 28;
+            btnPerfDiag.Text = "📊 Performance";
+            btnPerfDiag.UseVisualStyleBackColor = false;
+            btnPerfDiag.Click += btnPerfDiag_Click;
+            // 
+            // btnAdvancedDiag
+            // 
+            btnAdvancedDiag.BackColor = Color.LightCoral;
+            btnAdvancedDiag.Font = new Font("Segoe UI", 8F, FontStyle.Bold);
+            btnAdvancedDiag.Location = new Point(660, 12);
+            btnAdvancedDiag.Margin = new Padding(4, 3, 4, 3);
+            btnAdvancedDiag.Name = "btnAdvancedDiag";
+            btnAdvancedDiag.Size = new Size(100, 30);
+            btnAdvancedDiag.TabIndex = 29;
+            btnAdvancedDiag.Text = "🔬 Advanced";
+            btnAdvancedDiag.UseVisualStyleBackColor = false;
+            btnAdvancedDiag.Click += btnAdvancedDiag_Click;
+            // 
+            // btnTextFilterValidation
+            // 
+            btnTextFilterValidation.BackColor = Color.LightGreen;
+            btnTextFilterValidation.Font = new Font("Segoe UI", 8F, FontStyle.Bold);
+            btnTextFilterValidation.Location = new Point(770, 12);
+            btnTextFilterValidation.Margin = new Padding(4, 3, 4, 3);
+            btnTextFilterValidation.Name = "btnTextFilterValidation";
+            btnTextFilterValidation.Size = new Size(100, 30);
+            btnTextFilterValidation.TabIndex = 30;
+            btnTextFilterValidation.Text = "🔍 Text Filter";
+            btnTextFilterValidation.UseVisualStyleBackColor = false;
+            btnTextFilterValidation.Click += btnTextFilterValidation_Click;
+            // 
+            // btnAllDiag
+            // 
+            btnAllDiag.BackColor = Color.DarkSlateBlue;
+            btnAllDiag.Font = new Font("Segoe UI", 8F, FontStyle.Bold);
+            btnAllDiag.ForeColor = Color.White;
+            btnAllDiag.Location = new Point(880, 12);
+            btnAllDiag.Margin = new Padding(4, 3, 4, 3);
+            btnAllDiag.Name = "btnAllDiag";
+            btnAllDiag.Size = new Size(100, 30);
+            btnAllDiag.TabIndex = 31;
+            btnAllDiag.Text = "🎯 Все тесты";
+            btnAllDiag.UseVisualStyleBackColor = false;
+            btnAllDiag.Click += btnAllDiag_Click;
+            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(120F, 120F);
@@ -377,6 +448,11 @@
             Controls.Add(btnTestTTS);
             Controls.Add(chkInfiniteTests);
             Controls.Add(btnTestingGuide);
+            Controls.Add(btnDiagnostics);
+            Controls.Add(btnPerfDiag);
+            Controls.Add(btnAdvancedDiag);
+            Controls.Add(btnTextFilterValidation);
+            Controls.Add(btnAllDiag);
             Controls.Add(lblStats);
             Controls.Add(lblProcessingMode);
             Controls.Add(cbProcessingMode);
@@ -436,5 +512,10 @@
         private Label lblStats;
         private CheckBox chkInfiniteTests;
         private Button btnTestingGuide;
+        private Button btnDiagnostics;
+        private Button btnPerfDiag;
+        private Button btnAdvancedDiag;
+        private Button btnTextFilterValidation;
+        private Button btnAllDiag;
     }
 }

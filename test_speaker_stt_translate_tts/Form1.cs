@@ -1048,24 +1048,20 @@ namespace test_speaker_stt_translate_tts
         }
 
         /// <summary>
-        /// Добавляет кнопку для performance диагностики
+        /// Настраивает tooltips для всех диагностических кнопок
         /// </summary>
-        private void AddPerformanceDiagnosticsButton()
+        private void SetupDiagnosticsTooltips()
         {
-            var btnPerfDiag = new Button
-            {
-                Text = "📊 Performance",
-                Location = new Point(550, 12),
-                Size = new Size(100, 30),
-                BackColor = Color.LightYellow,
-                Font = new Font("Segoe UI", 8F, FontStyle.Bold),
-                UseVisualStyleBackColor = false
-            };
-            
-            btnPerfDiag.Click += (s, e) => RunPerformanceDiagnostics();
-            this.Controls.Add(btnPerfDiag);
-            
-            // Добавляем tooltip для Performance диагностики
+            // Базовая диагностика
+            var basicTooltip = new ToolTip();
+            basicTooltip.SetToolTip(btnDiagnostics, 
+                "Базовая диагностика (F5)\n" +
+                "• Проверка 6 критических компонентов\n" +
+                "• Whisper, MediaFoundation, Channels\n" +
+                "• Text Filter, Device Notifications\n" +
+                "• Время выполнения: ~5 секунд");
+
+            // Performance диагностика
             var perfTooltip = new ToolTip();
             perfTooltip.SetToolTip(btnPerfDiag, 
                 "Мониторинг производительности (F6)\n" +
@@ -1073,22 +1069,8 @@ namespace test_speaker_stt_translate_tts
                 "• Статус Bounded Channels\n" +
                 "• Состояние аудиоустройств\n" +
                 "• Время выполнения: ~3 секунды");
-            
-            // Добавляем кнопку углубленной диагностики
-            var btnAdvancedDiag = new Button
-            {
-                Text = "🔬 Advanced",
-                Location = new Point(660, 12),
-                Size = new Size(100, 30),
-                BackColor = Color.LightCoral,
-                Font = new Font("Segoe UI", 8F, FontStyle.Bold),
-                UseVisualStyleBackColor = false
-            };
-            
-            btnAdvancedDiag.Click += (s, e) => RunAdvancedDiagnostics();
-            this.Controls.Add(btnAdvancedDiag);
-            
-            // Добавляем tooltip для Advanced диагностики
+
+            // Advanced диагностика
             var advancedTooltip = new ToolTip();
             advancedTooltip.SetToolTip(btnAdvancedDiag, 
                 "Углубленная диагностика (F7)\n" +
@@ -1096,22 +1078,8 @@ namespace test_speaker_stt_translate_tts
                 "• Тесты утечек памяти и потокобезопасности\n" +
                 "• Whisper cold/warm start тестирование\n" +
                 "• Время выполнения: ~10 секунд");
-            
-            // Добавляем кнопку валидации текстового фильтра
-            var btnTextFilterValidation = new Button
-            {
-                Text = "🔍 Text Filter",
-                Location = new Point(770, 12),
-                Size = new Size(100, 30),
-                BackColor = Color.LightGreen,
-                Font = new Font("Segoe UI", 8F, FontStyle.Bold),
-                UseVisualStyleBackColor = false
-            };
-            
-            btnTextFilterValidation.Click += (s, e) => RunTextFilterValidation();
-            this.Controls.Add(btnTextFilterValidation);
-            
-            // Добавляем tooltip для Text Filter валидации
+
+            // Text Filter валидация
             var textFilterTooltip = new ToolTip();
             textFilterTooltip.SetToolTip(btnTextFilterValidation, 
                 "Валидация текстового фильтра (F9)\n" +
@@ -1119,34 +1087,8 @@ namespace test_speaker_stt_translate_tts
                 "• Многоязычная поддержка (EN/RU/ES/DE)\n" +
                 "• Проверка качества обработки текста\n" +
                 "• Время выполнения: ~8 секунд");
-                
-            // Добавляем кнопку комплексной диагностики
-            var btnAllDiag = new Button
-            {
-                Text = "🎯 Все тесты",
-                Location = new Point(880, 12),
-                Size = new Size(100, 30),
-                BackColor = Color.DarkSlateBlue,
-                ForeColor = Color.White,
-                Font = new Font("Segoe UI", 8F, FontStyle.Bold),
-                UseVisualStyleBackColor = false
-            };
-            
-            btnAllDiag.Click += (s, e) => {
-                // Запускаем все диагностики подряд
-                Task.Run(() => {
-                    TriggerSelfDiagnostics();
-                    Task.Delay(1000).Wait();
-                    RunPerformanceDiagnostics();
-                    Task.Delay(1000).Wait();
-                    RunAdvancedDiagnostics();
-                    Task.Delay(1000).Wait();
-                    RunTextFilterValidation();
-                });
-            };
-            this.Controls.Add(btnAllDiag);
-            
-            // Добавляем tooltip для комплексной диагностики
+
+            // Комплексная диагностика
             var allTooltip = new ToolTip();
             allTooltip.SetToolTip(btnAllDiag, 
                 "Комплексная диагностика (F8)\n" +
@@ -1154,8 +1096,8 @@ namespace test_speaker_stt_translate_tts
                 "• Полная валидация системы\n" +
                 "• Максимально детальный отчет\n" +
                 "• Время выполнения: ~30 секунд");
-                
-            // Добавляем tooltip для CheckBox бесконечных тестов
+
+            // Бесконечные тесты
             var infiniteTooltip = new ToolTip();
             infiniteTooltip.SetToolTip(chkInfiniteTests, 
                 "Бесконечные тесты\n" +
@@ -1163,8 +1105,8 @@ namespace test_speaker_stt_translate_tts
                 "• Полезно для долгосрочного мониторинга стабильности\n" +
                 "• Для остановки снимите галочку или перезапустите приложение\n" +
                 "• ОСТОРОЖНО: может сильно нагрузить систему!");
-                
-            // Добавляем tooltip для кнопки справочника
+
+            // Справочник тестирования
             var guideTooltip = new ToolTip();
             guideTooltip.SetToolTip(btnTestingGuide, 
                 "Справочник по тестированию (F10)\n" +
@@ -1174,53 +1116,8 @@ namespace test_speaker_stt_translate_tts
                 "• Решения типичных проблем\n" +
                 "• Автопозиционирование на втором мониторе\n" +
                 "• Всегда сверху для удобства");
-        }
 
-        #endregion
-
-        #region Constructor & Initialization
-
-        public Form1()
-        {
-            InitializeComponent();
-            
-            // Добавляем кнопку самодиагностики
-            CreateDiagnosticsButton();
-            
-            // Подписываемся на событие закрытия формы для корректной очистки ресурсов
-            this.FormClosing += Form1_OnFormClosing;
-            
-            InitializeApplication();
-        }
-
-        private void CreateDiagnosticsButton()
-        {
-            var btnDiagnostics = new Button
-            {
-                Text = "🔍 Диагностика",
-                Location = new Point(420, 12),
-                Size = new Size(120, 30),
-                BackColor = Color.LightBlue,
-                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
-                UseVisualStyleBackColor = false
-            };
-            
-            btnDiagnostics.Click += (s, e) => TriggerSelfDiagnostics();
-            this.Controls.Add(btnDiagnostics);
-            
-            // Добавляем tooltip для базовой диагностики
-            var basicTooltip = new ToolTip();
-            basicTooltip.SetToolTip(btnDiagnostics, 
-                "Базовая диагностика (F5)\n" +
-                "• Проверка 6 критических компонентов\n" +
-                "• Whisper, MediaFoundation, Channels\n" +
-                "• Text Filter, Device Notifications\n" +
-                "• Время выполнения: ~5 секунд");
-            
-            // Добавляем кнопку Performance диагностики
-            AddPerformanceDiagnosticsButton();
-            
-            // Добавляем горячую клавишу F5 для диагностики
+            // Настройка горячих клавиш
             this.KeyPreview = true;
             this.KeyDown += (s, e) => {
                 if (e.KeyCode == Keys.F5)
@@ -1263,6 +1160,23 @@ namespace test_speaker_stt_translate_tts
                     e.Handled = true;
                 }
             };
+        }
+
+        #endregion
+
+        #region Constructor & Initialization
+
+        public Form1()
+        {
+            InitializeComponent();
+            
+            // Настройка ToolTips для кнопок диагностики
+            SetupDiagnosticsTooltips();
+            
+            // Подписываемся на событие закрытия формы для корректной очистки ресурсов
+            this.FormClosing += Form1_OnFormClosing;
+            
+            InitializeApplication();
         }
 
         private void InitializeApplication()
@@ -5554,6 +5468,40 @@ namespace test_speaker_stt_translate_tts
         private void btnTestingGuide_Click(object sender, EventArgs e)
         {
             ShowTestingGuide();
+        }
+
+        private void btnDiagnostics_Click(object sender, EventArgs e)
+        {
+            TriggerSelfDiagnostics();
+        }
+
+        private void btnPerfDiag_Click(object sender, EventArgs e)
+        {
+            RunPerformanceDiagnostics();
+        }
+
+        private void btnAdvancedDiag_Click(object sender, EventArgs e)
+        {
+            RunAdvancedDiagnostics();
+        }
+
+        private void btnTextFilterValidation_Click(object sender, EventArgs e)
+        {
+            RunTextFilterValidation();
+        }
+
+        private void btnAllDiag_Click(object sender, EventArgs e)
+        {
+            // Запускаем все диагностики подряд
+            Task.Run(() => {
+                TriggerSelfDiagnostics();
+                Task.Delay(1000).Wait();
+                RunPerformanceDiagnostics();
+                Task.Delay(1000).Wait();
+                RunAdvancedDiagnostics();
+                Task.Delay(1000).Wait();
+                RunTextFilterValidation();
+            });
         }
 
         /// <summary>
