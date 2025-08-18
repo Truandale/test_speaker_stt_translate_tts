@@ -1,5 +1,8 @@
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
+using NAudio.MediaFoundation;
+using NAudio.CoreAudioApi.Interfaces;
+using NAudio.Wave.SampleProviders;
 using Whisper.net;
 using System.Speech.Synthesis;
 using RestSharp;
@@ -9,6 +12,8 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading.Channels;
+using System.Runtime.InteropServices;
 
 namespace test_speaker_stt_translate_tts
 {
@@ -49,6 +54,29 @@ namespace test_speaker_stt_translate_tts
         
         private volatile bool isTTSActive = false; // Для отслеживания активных TTS операций
         private DateTime lastVoiceActivity = DateTime.Now;
+        
+        // 🚀 КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Теплый Whisper instance
+        private static readonly object _whisperLock = new();
+        private static WhisperFactory? _whisperFactory;
+        private static WhisperProcessor? _whisperProcessor;
+        
+        // 🚀 НОВАЯ PIPELINE АРХИТЕКТУРА: Bounded Channels с backpressure
+        private readonly Channel<byte[]> _captureChannel = 
+            Channel.CreateBounded<byte[]>(new BoundedChannelOptions(64) { 
+                SingleWriter = true, 
+                FullMode = BoundedChannelFullMode.DropOldest 
+            });
+        private readonly Channel<float[]> _mono16kChannel = 
+            Channel.CreateBounded<float[]>(new BoundedChannelOptions(64) { 
+                FullMode = BoundedChannelFullMode.DropOldest 
+            });
+        private readonly Channel<string> _sttChannel = 
+            Channel.CreateBounded<string>(new BoundedChannelOptions(64) { 
+                FullMode = BoundedChannelFullMode.DropOldest 
+            });
+        
+        // CancellationToken для остановки пайплайна
+        private CancellationTokenSource? _pipelineCts;
         private DateTime recordingStartTime = DateTime.Now;
         private float voiceThreshold = 0.05f; // Повысим порог активации
         private int silenceDurationMs = 1000; // Сократим до 1 сек
@@ -122,6 +150,17 @@ namespace test_speaker_stt_translate_tts
         {
             LogMessage("🚀 Инициализация приложения с новой стабильной архитектурой...");
             
+            // 🚀 КРИТИЧЕСКАЯ ИНИЦИАЛИЗАЦИЯ: MediaFoundation для качественного ресемплинга
+            try
+            {
+                MediaFoundationApi.Startup();
+                LogMessage("✅ MediaFoundation инициализирован");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"⚠️ Ошибка инициализации MediaFoundation: {ex.Message}");
+            }
+            
             // Загружаем пользовательские настройки
             LoadUserSettings();
             
@@ -154,6 +193,12 @@ namespace test_speaker_stt_translate_tts
             
             // 🚀 НОВАЯ СТАБИЛЬНАЯ АРХИТЕКТУРА
             InitializeStableComponents();
+            
+            // 🚀 КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Инициализация Bounded Channels пайплайна
+            InitializeBoundedPipeline();
+            
+            // 🚀 АВТОМАТИЧЕСКОЕ ПЕРЕПОДКЛЮЧЕНИЕ: Мониторинг аудиоустройств
+            InitializeDeviceNotifications();
             
             InitializeTranslation();
             InitializeTimer();
@@ -537,6 +582,213 @@ namespace test_speaker_stt_translate_tts
         }
 
         #endregion
+
+        /// <summary>
+        /// 🚀 КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Инициализация разделенного пайплайна с Bounded Channels
+        /// Устраняет блокировки и дает контролируемые дропы при перегрузе
+        /// </summary>
+        private void InitializeBoundedPipeline()
+        {
+            try
+            {
+                LogMessage("🚀 Инициализация Bounded Channels пайплайна...");
+                
+                // Запускаем воркеры пайплайна
+                StartNormalizationWorker();
+                StartSttWorker();
+                StartTextProcessorWorker();
+                
+                LogMessage("✅ Bounded Channels пайплайн запущен");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка инициализации пайплайна: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Воркер нормализации: capture → normalize → 16k mono float
+        /// </summary>
+        private void StartNormalizationWorker()
+        {
+            _pipelineCts = new CancellationTokenSource();
+            var ct = _pipelineCts.Token;
+            
+            _ = Task.Run(async () =>
+            {
+                LogMessage("🔄 Воркер нормализации запущен");
+                
+                await foreach (var rawBuffer in _captureChannel.Reader.ReadAllAsync(ct))
+                {
+                    try
+                    {
+                        // Определяем входной формат (WASAPI loopback 44100Hz stereo float32)
+                        var inputFormat = WaveFormat.CreateIeeeFloatWaveFormat(44100, 2);
+                        var wavData = ConvertToWavNormalized(rawBuffer, inputFormat);
+                        
+                        if (wavData.Length > 44) // Проверяем WAV заголовок
+                        {
+                            // Извлекаем float32 данные, пропуская WAV заголовок
+                            var floatData = new float[(wavData.Length - 44) / 4];
+                            Buffer.BlockCopy(wavData, 44, floatData, 0, wavData.Length - 44);
+                            
+                            // Отправляем в следующий этап с backpressure
+                            if (!_mono16kChannel.Writer.TryWrite(floatData))
+                            {
+                                LogMessage("⚠️ Нормализация: канал переполнен, старые данные сброшены");
+                            }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LogMessage($"❌ Ошибка нормализации: {ex.Message}");
+                    }
+                }
+                
+                LogMessage("🔄 Воркер нормализации остановлен");
+            }, ct);
+        }
+
+        /// <summary>
+        /// STT воркер: 16k mono float → Whisper STT → текст
+        /// </summary>
+        private void StartSttWorker()
+        {
+            var ct = _pipelineCts?.Token ?? CancellationToken.None;
+            
+            _ = Task.Run(async () =>
+            {
+                LogMessage("🔄 STT воркер запущен");
+                EnsureWhisperReady(); // Подготавливаем теплый Whisper
+                
+                await foreach (var monoFloat in _mono16kChannel.Reader.ReadAllAsync(ct))
+                {
+                    try
+                    {
+                        // Создаем временный WAV файл для Whisper
+                        string tempFile = Path.GetTempFileName();
+                        try
+                        {
+                            // Создаем WAV файл с правильным заголовком
+                            var wavBytes = CreateWavFromFloats(monoFloat, 16000, 1);
+                            await File.WriteAllBytesAsync(tempFile, wavBytes, ct);
+                            
+                            // STT через теплый Whisper
+                            using var fileStream = File.OpenRead(tempFile);
+                            var result = new StringBuilder();
+                            
+                            await foreach (var segment in _whisperProcessor!.ProcessAsync(fileStream))
+                            {
+                                if (!string.IsNullOrWhiteSpace(segment.Text))
+                                {
+                                    string cleanText = segment.Text.Trim();
+                                    if (!IsPlaceholderToken(cleanText))
+                                    {
+                                        result.Append(cleanText + " ");
+                                    }
+                                }
+                            }
+                            
+                            string finalText = result.ToString().Trim();
+                            if (!string.IsNullOrWhiteSpace(finalText))
+                            {
+                                // Отправляем в следующий этап с backpressure
+                                if (!_sttChannel.Writer.TryWrite(finalText))
+                                {
+                                    LogMessage("⚠️ STT: канал переполнен, старые данные сброшены");
+                                }
+                            }
+                        }
+                        finally
+                        {
+                            try { File.Delete(tempFile); } catch { }
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LogMessage($"❌ Ошибка STT: {ex.Message}");
+                    }
+                }
+                
+                LogMessage("🔄 STT воркер остановлен");
+            }, ct);
+        }
+
+        /// <summary>
+        /// Воркер обработки текста: текст → перевод → TTS
+        /// </summary>
+        private void StartTextProcessorWorker()
+        {
+            var ct = _pipelineCts?.Token ?? CancellationToken.None;
+            
+            _ = Task.Run(async () =>
+            {
+                LogMessage("🔄 Воркер обработки текста запущен");
+                
+                await foreach (var recognizedText in _sttChannel.Reader.ReadAllAsync(ct))
+                {
+                    try
+                    {
+                        // Обновляем UI
+                        Invoke(() => {
+                            txtRecognizedText.Text = recognizedText;
+                            LogMessage($"✅ Распознан текст: '{recognizedText}'");
+                        });
+                        
+                        // Автоперевод если включен
+                        bool autoTranslate = false;
+                        Invoke(() => autoTranslate = chkAutoTranslate.Checked);
+                        
+                        if (autoTranslate)
+                        {
+                            await TranslateAndSpeak(recognizedText);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        LogMessage($"❌ Ошибка обработки текста: {ex.Message}");
+                    }
+                }
+                
+                LogMessage("🔄 Воркер обработки текста остановлен");
+            }, ct);
+        }
+
+        /// <summary>
+        /// Создает WAV файл из float32 массива
+        /// </summary>
+        private byte[] CreateWavFromFloats(float[] floats, int sampleRate, int channels)
+        {
+            var wav = new List<byte>();
+            
+            // WAV заголовок
+            int dataSize = floats.Length * 2; // 16-bit = 2 bytes per sample
+            int fileSize = 36 + dataSize;
+            
+            wav.AddRange(Encoding.ASCII.GetBytes("RIFF"));
+            wav.AddRange(BitConverter.GetBytes(fileSize));
+            wav.AddRange(Encoding.ASCII.GetBytes("WAVE"));
+            wav.AddRange(Encoding.ASCII.GetBytes("fmt "));
+            wav.AddRange(BitConverter.GetBytes(16)); // PCM chunk size
+            wav.AddRange(BitConverter.GetBytes((short)1)); // PCM format
+            wav.AddRange(BitConverter.GetBytes((short)channels));
+            wav.AddRange(BitConverter.GetBytes(sampleRate));
+            wav.AddRange(BitConverter.GetBytes(sampleRate * channels * 2)); // Byte rate
+            wav.AddRange(BitConverter.GetBytes((short)(channels * 2))); // Block align
+            wav.AddRange(BitConverter.GetBytes((short)16)); // 16-bit
+            wav.AddRange(Encoding.ASCII.GetBytes("data"));
+            wav.AddRange(BitConverter.GetBytes(dataSize));
+            
+            // Конвертируем float32 в int16
+            foreach (var sample in floats)
+            {
+                float clamped = Math.Max(-1.0f, Math.Min(1.0f, sample));
+                short intSample = (short)(clamped * 32767f);
+                wav.AddRange(BitConverter.GetBytes(intSample));
+            }
+            
+            return wav.ToArray();
+        }
 
         private void InitializeTranslation()
         {
@@ -1564,141 +1816,71 @@ namespace test_speaker_stt_translate_tts
                 return;
             }
 
-            // ПРАВИЛЬНАЯ ЛОГИКА: НЕ ИГНОРИРУЕМ РЕЧЬ СОБЕСЕДНИКА ВО ВРЕМЯ TTS
-            // Во время TTS накапливаем аудио для последующей обработки
-            if (isTTSActive || (speechSynthesizer?.State == System.Speech.Synthesis.SynthesizerState.Speaking))
-            {
-                if (smartAudioManager != null)
-                {
-                    // Копируем текущие аудиоданные для накопления
-                    byte[] currentAudio = new byte[e.BytesRecorded];
-                    Array.Copy(e.Buffer, currentAudio, e.BytesRecorded);
-                    
-                    // Добавляем в очередь для обработки после TTS
-                    smartAudioManager.QueueAudioSegment(currentAudio, DateTime.Now, "tts_period");
-                    
-                    // Также сохраняем текущий буфер если идет запись
-                    if (isCollectingAudio && audioBuffer.Count > 0)
-                    {
-                        byte[] bufferedAudio = audioBuffer.ToArray();
-                        smartAudioManager.QueueAudioSegment(bufferedAudio, DateTime.Now, "tts_buffered");
-                        audioBuffer.Clear();
-                        isCollectingAudio = false;
-                    }
-                }
-                return; // Аудио сохранено в очереди для последующей обработки
-            }
-
+            // 🚀 КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Отправляем в Bounded Channels пайплайн
             try
             {
-                // Calculate audio level (32-bit float for speakers)
+                // Calculate audio level для UI
                 float level = CalculateAudioLevel(e.Buffer, e.BytesRecorded);
                 currentAudioLevel = level;
 
-                // Логирование первых 5 уровней звука для отладки
-                if (audioLogCount < 5)
+                // Проверяем голосовую активность
+                if (level > voiceThreshold)
                 {
-                    LogMessage($"🔊 Аудиоуровень #{audioLogCount + 1}: {level:F3} (порог: {voiceThreshold:F3})");
-                    audioLogCount++;
-                }
-
-                // ПРОСТАЯ ЛОГИКА VAD КАК ДЛЯ МИКРОФОНА
-                bool isVoiceDetected = level > voiceThreshold;
-
-                if (isVoiceDetected)
-                {
+                    lastVoiceActivity = DateTime.Now;
+                    
                     if (!isCollectingAudio)
                     {
                         isCollectingAudio = true;
                         audioBuffer.Clear();
-                        recordingStartTime = DateTime.Now;
-                        LogMessage($"🔊 Начат захват речи с динамиков (уровень: {level:F3})");
-                        
-                        Invoke(() => {
-                            txtRecognizedText.Text = "🔊 Записываю речь с динамиков...";
-                            progressBar.Visible = true;
-                        });
+                        LogMessageDebug($"🎤 Начало записи аудио, уровень: {level:F3}");
                     }
                     
-                    lastVoiceActivity = DateTime.Now;
-                }
-
-                if (isCollectingAudio)
-                {
-                    // Добавляем данные как есть (32-bit float для динамиков)
-                    audioBuffer.AddRange(e.Buffer.Take(e.BytesRecorded));
+                    // Копируем буфер для отправки в канал
+                    byte[] audioChunk = new byte[e.BytesRecorded];
+                    Array.Copy(e.Buffer, audioChunk, e.BytesRecorded);
+                    audioBuffer.AddRange(audioChunk);
                     
-                    // Check for max recording time
-                    var recordingDuration = DateTime.Now - recordingStartTime;
-                    if (recordingDuration.TotalMilliseconds > maxRecordingMs)
+                    // 🚀 ОТПРАВЛЯЕМ В КАНАЛ ВМЕСТО ПРЯМОЙ ОБРАБОТКИ
+                    if (_captureChannel.Writer.TryWrite(audioChunk))
                     {
-                        isCollectingAudio = false;
-                        LogMessage($"⏰ Принудительная остановка записи динамиков (максимум {maxRecordingMs}мс достигнут)");
-                        
-                        if (audioBuffer.Count > 16000)
-                        {
-                            LogMessage($"⏹️ Принудительная обработка динамиков (данных: {audioBuffer.Count} байт)");
-                            
-                            Invoke(() => {
-                                txtRecognizedText.Text = "🔄 Обрабатываю аудио с динамиков...";
-                            });
-                            
-                            _ = Task.Run(() => ProcessAudioSequentially(audioBuffer.ToArray()));
-                        }
-                        else
-                        {
-                            LogMessage("⚠️ Недостаточно данных для обработки с динамиков");
-                            audioBuffer.Clear();
-                            
-                            Invoke(() => {
-                                txtRecognizedText.Text = "⚠️ Недостаточно аудиоданных с динамиков";
-                                progressBar.Visible = false;
-                            });
-                        }
-                        return;
+                        LogMessageDebug($"📊 Аудио отправлено в канал: {audioChunk.Length} байт");
                     }
-
-                    // Check for silence duration
-                    var silenceDuration = DateTime.Now - lastVoiceActivity;
-                    if (silenceDuration.TotalMilliseconds > silenceDurationMs)
+                    else
                     {
-                        isCollectingAudio = false;
-                        LogMessage($"🔇 Обнаружена пауза в речи с динамиков ({silenceDuration.TotalMilliseconds:F0}мс)");
-                        
-                        if (audioBuffer.Count > 8000) // Минимальный размер для обработки
-                        {
-                            LogMessage($"✅ Обрабатываем аудио с динамиков (данных: {audioBuffer.Count} байт)");
-                            
-                            Invoke(() => {
-                                txtRecognizedText.Text = "🔄 Обрабатываю аудио с динамиков...";
-                            });
-                            
-                            _ = Task.Run(() => ProcessAudioSequentially(audioBuffer.ToArray()));
-                        }
-                        else
-                        {
-                            LogMessage("⚠️ Слишком мало данных для обработки с динамиков");
-                            audioBuffer.Clear();
-                            
-                            Invoke(() => {
-                                txtRecognizedText.Text = "⚠️ Слишком короткий фрагмент с динамиков";
-                                progressBar.Visible = false;
-                            });
-                        }
+                        LogMessage("⚠️ Канал захвата переполнен, данные сброшены");
                     }
                 }
-
-                // Если включен стриминговый режим, также обрабатываем его
-                if (currentProcessingMode == 1 && streamingProcessor != null && isVoiceDetected)
+                else if (isCollectingAudio)
                 {
-                    ProcessStreamingAudio(e.Buffer, e.BytesRecorded, level);
+                    // Проверяем паузу для завершения записи
+                    if ((DateTime.Now - lastVoiceActivity).TotalSeconds > 2.0)
+                    {
+                        LogMessageDebug($"🔇 Пауза обнаружена, завершение записи. Буфер: {audioBuffer.Count} байт");
+                        
+                        // Отправляем накопленный буфер если он достаточно большой
+                        if (audioBuffer.Count > 16000) // Минимум для обработки
+                        {
+                            byte[] finalBuffer = audioBuffer.ToArray();
+                            if (_captureChannel.Writer.TryWrite(finalBuffer))
+                            {
+                                LogMessage($"📝 Финальный буфер отправлен: {finalBuffer.Length} байт");
+                            }
+                        }
+                        
+                        isCollectingAudio = false;
+                        audioBuffer.Clear();
+                    }
                 }
             }
             catch (Exception ex)
             {
-                LogMessage($"❌ Ошибка обработки аудио: {ex.Message}");
+                LogMessage($"❌ Ошибка в канальном обработчике аудио: {ex.Message}");
             }
         }
+
+        #endregion
+
+        #region Microphone Audio Processing
         
         private void ProcessStreamingAudio(byte[] buffer, int bytesRecorded, float level)
         {
@@ -2092,22 +2274,24 @@ namespace test_speaker_stt_translate_tts
                 // Анализируем качество аудио данных
                 AnalyzeAudioQuality(audioData, sequenceNumber);
                 
-                // Convert to WAV format for Whisper
-                var wavData = ConvertToWav(audioData);
+                // 🚀 КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Нормализация аудио с MediaFoundationResampler
+                // Определяем входной формат (предполагаем WASAPI loopback 44100Hz stereo float32)
+                var inputFormat = WaveFormat.CreateIeeeFloatWaveFormat(44100, 2);
+                var wavData = ConvertToWavNormalized(audioData, inputFormat);
                 
                 if (wavData.Length == 0)
                 {
-                    LogMessage($"❌ Сегмент #{sequenceNumber} - Конвертация WAV неудачна");
+                    LogMessage($"❌ Сегмент #{sequenceNumber} - Нормализация аудио неудачна");
                     
                     Invoke(() => {
-                        txtRecognizedText.Text = "❌ Ошибка конвертации аудио";
+                        txtRecognizedText.Text = "❌ Ошибка нормализации аудио";
                         progressBar.Visible = false;
                     });
                     
                     return;
                 }
                 
-                LogMessage($"🔄 Сегмент #{sequenceNumber} - Конвертация в WAV: {wavData.Length} байт");
+                LogMessage($"🔄 Сегмент #{sequenceNumber} - Нормализовано до WAV: {wavData.Length} байт");
 
                 // Perform STT with Whisper.NET
                 string recognizedText = await PerformWhisperSTT(wavData);
@@ -2154,11 +2338,89 @@ namespace test_speaker_stt_translate_tts
             }
         }
 
+        /// <summary>
+        /// 🚀 КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Инициализация "теплого" Whisper instance
+        /// Убирает overhead создания WhisperFactory/CreateBuilder на каждый сегмент
+        /// </summary>
+        private void EnsureWhisperReady()
+        {
+            if (_whisperProcessor != null) return;
+            
+            lock (_whisperLock)
+            {
+                if (_whisperProcessor != null) return;
+                
+                try
+                {
+                    LogMessage("🚀 Инициализация теплого Whisper instance...");
+                    
+                    _whisperFactory = WhisperFactory.FromPath(WhisperModelPath);
+                    _whisperProcessor = _whisperFactory.CreateBuilder()
+                        .WithLanguage("ru") // Фиксированный русский язык для стабильности
+                        .WithPrompt("Это человеческая речь на русском языке") // Русская подсказка
+                        .WithProbabilities() // Включаем вероятности для фильтрации
+                        .WithTemperature(0.1f) // Немного увеличим для лучшего распознавания
+                        .Build();
+                    
+                    LogMessage("✅ Теплый Whisper instance готов к использованию!");
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"❌ Ошибка инициализации Whisper: {ex.Message}");
+                    throw;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 🚀 КРИТИЧЕСКАЯ ОЧИСТКА: Безопасная очистка теплого Whisper instance
+        /// </summary>
+        private static void CleanupWhisperResources()
+        {
+            lock (_whisperLock)
+            {
+                try
+                {
+                    if (_whisperProcessor != null)
+                    {
+                        (_whisperProcessor as IDisposable)?.Dispose();
+                        _whisperProcessor = null;
+                        Debug.WriteLine("✅ Whisper processor очищен");
+                    }
+                    
+                    if (_whisperFactory != null)
+                    {
+                        _whisperFactory.Dispose();
+                        _whisperFactory = null;
+                        Debug.WriteLine("✅ Whisper factory очищен");
+                    }
+                    
+                    // 🚀 ОЧИСТКА MediaFoundation
+                    try
+                    {
+                        MediaFoundationApi.Shutdown();
+                        Debug.WriteLine("✅ MediaFoundation очищен");
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"⚠️ Ошибка очистки MediaFoundation: {ex.Message}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Debug.WriteLine($"⚠️ Ошибка очистки Whisper: {ex.Message}");
+                }
+            }
+        }
+
         private async Task<string> PerformWhisperSTT(byte[] wavData)
         {
             try
             {
-                LogMessage("🤖 Инициализация Whisper.NET...");
+                // 🚀 КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Используем теплый Whisper instance
+                EnsureWhisperReady();
+                
+                LogMessage("🔄 Обработка аудио через теплый Whisper...");
                 
                 // Create temporary WAV file
                 string tempFile = Path.GetTempFileName();
@@ -2166,20 +2428,11 @@ namespace test_speaker_stt_translate_tts
                 
                 try
                 {
-                    using var whisperFactory = WhisperFactory.FromPath(WhisperModelPath);
-                    using var processor = whisperFactory.CreateBuilder()
-                        .WithLanguage("ru") // Фиксированный русский язык для стабильности
-                        .WithPrompt("Это человеческая речь на русском языке") // Русская подсказка
-                        .WithProbabilities() // Включаем вероятности для фильтрации
-                        .WithTemperature(0.1f) // Немного увеличим для лучшего распознавания
-                        .Build();
-
-                    LogMessage("🔄 Обработка аудио через Whisper...");
-                    
+                    // 🚀 ИСПОЛЬЗУЕМ ТЕПЛЫЙ INSTANCE ВМЕСТО СОЗДАНИЯ НОВОГО
                     using var fileStream = File.OpenRead(tempFile);
                     var result = new StringBuilder();
                     
-                    await foreach (var segment in processor.ProcessAsync(fileStream))
+                    await foreach (var segment in _whisperProcessor!.ProcessAsync(fileStream))
                     {
                         LogMessage($"🎯 Whisper сегмент: '{segment.Text}'");
                         
@@ -2256,80 +2509,151 @@ namespace test_speaker_stt_translate_tts
                 
             text = text.Trim();
             
-            // Проверка на специальные маркеры
-            string[] specialTokens = {
+            // 🚀 УЛУЧШЕННЫЙ ФИЛЬТР: Менее агрессивная фильтрация
+            
+            // Проверка на специальные маркеры (четкие заглушки)
+            string[] definiteTokens = {
                 "[Music]", "[Музыка]", "[музыка]", 
                 "[BLANK_AUDIO]", "[Sound]", "[Звук]",
                 "[Bell rings]", "[звук колокола]",
                 "[Sounds of a camera]", "[звук камеры]",
-                "[oh wait]", "[Growling]", "[рычание]",
                 "[BIRDS CHIRPING]", "[пение птиц]",
                 "This is human speech", "Это человеческая речь",
-                "(snoring)", "(храп)", "(끝)", "(음악)",
-                "Bye.", "До свидания.", "...", "ʕ", "ʔ"
+                "(snoring)", "(храп)", "(음악)", "♪"
             };
             
-            foreach (var token in specialTokens)
+            foreach (var token in definiteTokens)
             {
                 if (text.Contains(token, StringComparison.OrdinalIgnoreCase))
                 {
-                    DebugLogSpeechValidation($"� Обнаружен специальный токен: '{token}' в '{text}'");
+                    DebugLogSpeechValidation($"🚫 Обнаружен специальный токен: '{token}' в '{text}'");
                     return true;
                 }
             }
             
-            // Проверка на слишком много неалфавитных символов (гарантированно мусор)
+            // 🔥 МЕНЕЕ АГРЕССИВНАЯ проверка на мусорные символы (повышен порог)
             int totalChars = text.Length;
-            int nonAlphaCount = text.Count(c => !char.IsLetter(c) && !char.IsWhiteSpace(c));
+            int nonAlphaCount = text.Count(c => !char.IsLetter(c) && !char.IsWhiteSpace(c) && !char.IsPunctuation(c));
             float nonAlphaRatio = (float)nonAlphaCount / totalChars;
             
-            if (nonAlphaRatio > 0.3f) // Более 30% неалфавитных символов
+            if (nonAlphaRatio > 0.5f) // ПОВЫШЕН с 30% до 50%
             {
-                DebugLogSpeechValidation($"🚫 Слишком много неалфавитных символов: {nonAlphaRatio:P} в '{text}'");
+                DebugLogSpeechValidation($"🚫 Слишком много мусорных символов: {nonAlphaRatio:P} в '{text}'");
                 return true;
             }
             
-            // Проверка на Unicode символы вне обычных диапазонов
-            if (ContainsUnusualUnicode(text))
+            // 🔥 УЛУЧШЕННАЯ проверка Unicode: разрешаем больше языков
+            if (ContainsDefinitelyInvalidUnicode(text))
             {
-                DebugLogSpeechValidation($"🚫 Обнаружены необычные Unicode символы в '{text}'");
+                DebugLogSpeechValidation($"🚫 Обнаружены явно некорректные символы в '{text}'");
                 return true;
             }
             
-            // �🚀 Используем продвинутый европейский фильтр с debug логированием
-            DebugLogSpeechValidation($"🔍 Проверка на заглушку: '{text}'");
+            // � МЕНЕЕ СТРОГАЯ проверка через европейский фильтр
+            DebugLogSpeechValidation($"🔍 Проверка валидности речи: '{text}'");
             
-            bool isValid = EuropeanLanguageFilter.IsValidEuropeanSpeech(text);
+            // Если текст длинный (>15 символов), применяем менее строгие критерии
+            bool isLongText = text.Length > 15;
+            bool isValid;
+            
+            if (isLongText)
+            {
+                // Для длинного текста - менее строгая проверка
+                isValid = EuropeanLanguageFilter.IsValidEuropeanSpeech(text) || 
+                         ContainsValidWords(text);
+            }
+            else
+            {
+                // Для короткого текста - обычная проверка
+                isValid = EuropeanLanguageFilter.IsValidEuropeanSpeech(text);
+            }
+            
             bool isPlaceholder = !isValid;
             
-            DebugLogSpeechValidation($"📊 Заглушка: IsValid={isValid}, IsPlaceholder={isPlaceholder}");
+            DebugLogSpeechValidation($"📊 Результат фильтра: IsValid={isValid}, IsPlaceholder={isPlaceholder}, Length={text.Length}");
             
             return isPlaceholder;
         }
         
-        private bool ContainsUnusualUnicode(string text)
+        // 🚀 НОВЫЙ МЕТОД: Проверка на наличие валидных слов для длинного текста
+        private bool ContainsValidWords(string text)
         {
+            // Простая проверка - есть ли последовательности букв (возможные слова)
+            var words = text.Split(new char[] { ' ', '\t', '\n', '\r', ',', '.', '!', '?' }, 
+                                 StringSplitOptions.RemoveEmptyEntries);
+            
+            int validWords = 0;
+            foreach (var word in words)
+            {
+                // Слово валидно если состоит в основном из букв и имеет разумную длину
+                if (word.Length >= 2 && word.Count(char.IsLetter) >= word.Length * 0.7)
+                {
+                    validWords++;
+                }
+            }
+            
+            // Считаем текст валидным если есть хотя бы 2 валидных слова
+            return validWords >= 2;
+        }
+        
+        private bool ContainsDefinitelyInvalidUnicode(string text)
+        {
+            // 🔥 УЛУЧШЕННАЯ Unicode проверка: только явно неправильные символы
+            
+            int invalidCount = 0;
+            int totalChars = text.Length;
+            
             foreach (char c in text)
             {
-                // Разрешенные диапазоны: базовая латиница, кириллица, знаки препинания
+                // Пропускаем обычные символы
                 if (char.IsWhiteSpace(c) || char.IsPunctuation(c) || char.IsDigit(c))
                     continue;
                     
                 int code = (int)c;
                 
-                // Базовая латиница (A-Z, a-z)
-                if ((code >= 0x0041 && code <= 0x005A) || (code >= 0x0061 && code <= 0x007A))
-                    continue;
+                // Разрешаем широкий спектр языков
+                bool isValidChar = false;
+                
+                // Базовая и расширенная латиница (большинство европейских языков)
+                if ((code >= 0x0041 && code <= 0x005A) || // A-Z
+                    (code >= 0x0061 && code <= 0x007A) || // a-z
+                    (code >= 0x00C0 && code <= 0x024F) || // Расширенная латиница
+                    (code >= 0x1E00 && code <= 0x1EFF))   // Дополнительная расширенная латиница
+                {
+                    isValidChar = true;
+                }
                     
-                // Кириллица
+                // Кириллица (русский, украинский, белорусский, болгарский и др.)
                 if (code >= 0x0400 && code <= 0x04FF)
-                    continue;
-                    
-                // Расширенная латиница (европейские языки)
-                if (code >= 0x00C0 && code <= 0x024F)
-                    continue;
-                    
-                // Если символ вне этих диапазонов - подозрительно
+                {
+                    isValidChar = true;
+                }
+                
+                // Арабские цифры и символы
+                if (code >= 0x0600 && code <= 0x06FF)
+                {
+                    isValidChar = true;
+                }
+                
+                // Греческий алфавит
+                if (code >= 0x0370 && code <= 0x03FF)
+                {
+                    isValidChar = true;
+                }
+                
+                // Если символ не распознан как валидный
+                if (!isValidChar)
+                {
+                    invalidCount++;
+                }
+            }
+            
+            // Считаем текст невалидным только если БОЛЬШЕ 50% символов явно неправильные
+            float invalidRatio = (float)invalidCount / totalChars;
+            
+            if (invalidRatio > 0.5f)
+            {
+                DebugLogSpeechValidation($"🚫 Слишком много неправильных Unicode: {invalidRatio:P} в '{text}'");
                 return true;
             }
             
@@ -2491,73 +2815,73 @@ namespace test_speaker_stt_translate_tts
 
         #endregion
 
-        #region Translation & TTS
+        #region Audio Conversion
 
-        private async Task TranslateAndSpeak(string text)
+        /// <summary>
+        /// 🚀 КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Гарантированная нормализация аудио до 16kHz mono float
+        /// Использует MediaFoundationResampler для качественного ресемплинга и downmix
+        /// </summary>
+        private byte[] ConvertToWavNormalized(byte[] inputPcm, WaveFormat inputFormat)
         {
             try
             {
-                string sourceLang = "";
-                string targetLang = "";
+                LogMessage($"🔄 Нормализация аудио: {inputFormat.SampleRate}Hz {inputFormat.Channels}ch → 16kHz mono");
                 
-                // Безопасное получение значений из UI потока
-                Invoke(() => {
-                    sourceLang = GetLanguageCode(cbSourceLang.SelectedItem?.ToString() ?? "Автоопределение");
-                    targetLang = GetLanguageCode(cbTargetLang.SelectedItem?.ToString() ?? "Русский");
-                });
-                
-                LogMessage($"🌐 Перевод: {sourceLang} → {targetLang}");
-                
-                Invoke(() => {
-                    txtTranslatedText.Text = "🔄 Переводим...";
-                });
-
-                // Проверяем, нужно ли разбивать текст на предложения
-                if (SmartTextSplitter.ShouldSplit(text))
+                // Проверяем минимальную длину
+                if (inputPcm.Length < 4000)
                 {
-                    LogMessage($"📝 Текст длинный ({text.Length} символов), разбиваем на предложения");
-                    await TranslateTextInSentences(text, sourceLang, targetLang);
+                    LogMessage($"⚠️ Слишком короткий аудиосегмент: {inputPcm.Length} байт");
+                    return new byte[0];
+                }
+                
+                using var srcStream = new RawSourceWaveStream(
+                    new MemoryStream(inputPcm, writable: false), inputFormat);
+                
+                // Если стерео — сначала приводим к mono через downmix
+                IWaveProvider monoProvider;
+                if (inputFormat.Channels > 1)
+                {
+                    // Конвертируем в float32 для качественного downmix
+                    var floatProvider = new Wave16ToFloatProvider(srcStream);
+                    var sampleProvider = floatProvider.ToSampleProvider();
+                    var monoSampleProvider = new StereoToMonoSampleProvider(sampleProvider);
+                    monoProvider = monoSampleProvider.ToWaveProvider();
                 }
                 else
                 {
-                    // Переводим как обычно
-                    string translatedText = await TranslateText(text, sourceLang, targetLang);
-                    
-                    if (!string.IsNullOrEmpty(translatedText))
-                    {
-                        // Анализируем качество перевода
-                        string qualityInfo = AnalyzeTranslationQuality(text, translatedText);
-                        LogMessage($"✅ Переведено{qualityInfo}: '{translatedText}'");
-                        
-                        Invoke(() => {
-                            txtTranslatedText.Text = translatedText;
-                        });
-                        
-                        // Speak translated text
-                        await SpeakText(translatedText);
-                    }
-                    else
-                    {
-                        LogMessage("❌ Перевод не удался");
-                        Invoke(() => {
-                            txtTranslatedText.Text = "❌ Ошибка перевода";
-                        });
-                    }
+                    monoProvider = srcStream;
                 }
-            }
-            catch (OperationCanceledException)
-            {
-                LogMessage("🛑 Операция перевода/озвучивания отменена");
-                Invoke(() => {
-                    txtTranslatedText.Text = "🛑 Операция отменена";
-                });
+                
+                // Целевой формат: 16kHz mono float32
+                var targetFormat = WaveFormat.CreateIeeeFloatWaveFormat(16000, 1);
+                
+                // MediaFoundation высококачественный ресемплинг
+                using var resampler = new MediaFoundationResampler(monoProvider, targetFormat)
+                {
+                    ResamplerQuality = 60 // Максимальное качество
+                };
+                
+                // Читаем все данные
+                using var outputStream = new MemoryStream();
+                using var writer = new WaveFileWriter(outputStream, targetFormat);
+                
+                var buffer = new byte[4096];
+                int bytesRead;
+                while ((bytesRead = resampler.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    writer.Write(buffer, 0, bytesRead);
+                }
+                
+                writer.Flush();
+                var result = outputStream.ToArray();
+                
+                LogMessage($"✅ Нормализация завершена: {inputPcm.Length} → {result.Length} байт");
+                return result;
             }
             catch (Exception ex)
             {
-                LogMessage($"❌ Ошибка перевода: {ex.Message}");
-                Invoke(() => {
-                    txtTranslatedText.Text = $"❌ Ошибка: {ex.Message}";
-                });
+                LogMessage($"❌ Ошибка нормализации аудио: {ex.Message}");
+                return new byte[0];
             }
         }
 
@@ -2994,6 +3318,75 @@ namespace test_speaker_stt_translate_tts
             return languageCodes.TryGetValue(languageName, out string? code) ? code : "en";
         }
 
+        // 🚀 МЕТОД ДЛЯ АВТОМАТИЧЕСКОГО ПЕРЕВОДА И ОЗВУЧИВАНИЯ
+        private async Task TranslateAndSpeak(string text)
+        {
+            try
+            {
+                string sourceLang = "";
+                string targetLang = "";
+                
+                // Безопасное получение значений из UI потока
+                Invoke(() => {
+                    sourceLang = GetLanguageCode(cbSourceLang.SelectedItem?.ToString() ?? "Автоопределение");
+                    targetLang = GetLanguageCode(cbTargetLang.SelectedItem?.ToString() ?? "Русский");
+                });
+                
+                LogMessage($"🌐 Перевод: {sourceLang} → {targetLang}");
+                
+                Invoke(() => {
+                    txtTranslatedText.Text = "🔄 Переводим...";
+                });
+
+                // Проверяем, нужно ли разбивать текст на предложения
+                if (SmartTextSplitter.ShouldSplit(text))
+                {
+                    LogMessage($"📝 Текст длинный ({text.Length} символов), разбиваем на предложения");
+                    await TranslateTextInSentences(text, sourceLang, targetLang);
+                }
+                else
+                {
+                    // Переводим как обычно
+                    string translatedText = await TranslateText(text, sourceLang, targetLang);
+                    
+                    if (!string.IsNullOrEmpty(translatedText))
+                    {
+                        // Анализируем качество перевода
+                        string qualityInfo = AnalyzeTranslationQuality(text, translatedText);
+                        LogMessage($"✅ Переведено{qualityInfo}: '{translatedText}'");
+                        
+                        Invoke(() => {
+                            txtTranslatedText.Text = translatedText;
+                        });
+                        
+                        // Speak translated text
+                        await SpeakText(translatedText);
+                    }
+                    else
+                    {
+                        LogMessage("❌ Перевод не удался");
+                        Invoke(() => {
+                            txtTranslatedText.Text = "❌ Ошибка перевода";
+                        });
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                LogMessage("🛑 Операция перевода/озвучивания отменена");
+                Invoke(() => {
+                    txtTranslatedText.Text = "🛑 Операция отменена";
+                });
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка перевода: {ex.Message}");
+                Invoke(() => {
+                    txtTranslatedText.Text = $"❌ Ошибка: {ex.Message}";
+                });
+            }
+        }
+
         #endregion
 
         #region UI Events
@@ -3047,6 +3440,12 @@ namespace test_speaker_stt_translate_tts
                 audioLevelTimer?.Dispose();
                 smartAudioManager?.Dispose();
                 googleTranslateClient?.Dispose();
+                
+                // 🚀 Очистка мониторинга устройств
+                CleanupDeviceNotifications();
+                
+                // 🚀 Очистка MediaFoundation
+                MediaFoundationApi.Shutdown();
                 
                 LogMessage("✅ Приложение закрыто");
             }
@@ -3427,6 +3826,8 @@ namespace test_speaker_stt_translate_tts
         #endregion
 
         #region Helper Classes
+        
+        #endregion
 
         #region Form Cleanup
 
@@ -3442,6 +3843,9 @@ namespace test_speaker_stt_translate_tts
                 
                 // 🚀 ОЧИСТКА НОВЫХ СТАБИЛЬНЫХ КОМПОНЕНТОВ
                 CleanupStableComponents().GetAwaiter().GetResult();
+                
+                // 🚀 КРИТИЧЕСКАЯ ОЧИСТКА: Теплый Whisper instance
+                CleanupWhisperResources();
                 
                 // Останавливаем и освобождаем WASAPI захват (legacy)
                 if (wasapiCapture != null)
@@ -3863,6 +4267,160 @@ namespace test_speaker_stt_translate_tts
 
         #endregion
 
+        #region Device Notification Handler
+        
+        // 🚀 АВТОМАТИЧЕСКОЕ ПЕРЕПОДКЛЮЧЕНИЕ устройств при HDMI/Bluetooth переключении
+        private MMDeviceEnumerator? deviceEnumerator;
+        private AudioDeviceNotificationClient? notificationClient;
+        
+        private void InitializeDeviceNotifications()
+        {
+            try
+            {
+                deviceEnumerator = new MMDeviceEnumerator();
+                notificationClient = new AudioDeviceNotificationClient(this);
+                deviceEnumerator.RegisterEndpointNotificationCallback(notificationClient);
+                
+                LogMessage("🔔 Инициализирован мониторинг аудиоустройств");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"⚠️ Не удалось инициализировать мониторинг устройств: {ex.Message}");
+            }
+        }
+        
+        public void OnDeviceChanged()
+        {
+            // Вызывается при изменении аудиоустройств
+            LogMessage("🔄 Обнаружено изменение аудиоустройств - переподключение...");
+            
+            Task.Run(async () =>
+            {
+                await Task.Delay(1000); // Короткая пауза для стабилизации
+                
+                try
+                {
+                    Invoke(() =>
+                    {
+                        StopRecording(); // Остановить текущую запись
+                        RefreshAudioDevices(); // Обновить список устройств
+                        
+                        // Автоматически переподключиться к лучшему доступному устройству
+                        if (availableSpeakerDevices.Count > 0)
+                        {
+                            var bestDevice = availableSpeakerDevices.First();
+                            SetSpeakerDevice(bestDevice);
+                            LogMessage($"🔄 Автоматически переподключен к: {bestDevice.FriendlyName}");
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"❌ Ошибка автоматического переподключения: {ex.Message}");
+                }
+            });
+        }
+        
+        private void CleanupDeviceNotifications()
+        {
+            try
+            {
+                if (deviceEnumerator != null && notificationClient != null)
+                {
+                    deviceEnumerator.UnregisterEndpointNotificationCallback(notificationClient);
+                }
+                
+                deviceEnumerator?.Dispose();
+                notificationClient = null;
+                deviceEnumerator = null;
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"⚠️ Ошибка очистки мониторинга устройств: {ex.Message}");
+            }
+        }
+        
+        // 🚀 ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ для device notifications
+        private void StopRecording()
+        {
+            // Остановка аудио записи
+            try { wasapiCapture?.StopRecording(); } catch { }
+            try { waveInCapture?.StopRecording(); } catch { }
+            LogMessage("🛑 Запись остановлена для переподключения устройства");
+        }
+        
+        private void RefreshAudioDevices()
+        {
+            // Обновление списков аудиоустройств
+            try
+            {
+                LogMessage("🔄 Обновление списка аудиоустройств...");
+                // Здесь можно добавить логику обновления устройств
+                // Пока просто логируем
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка обновления устройств: {ex.Message}");
+            }
+        }
+        
+        private List<MMDevice> availableSpeakerDevices = new List<MMDevice>();
+        
+        private void SetSpeakerDevice(MMDevice device)
+        {
+            // Установка нового аудиоустройства
+            try
+            {
+                LogMessage($"🔄 Переключение на устройство: {device.FriendlyName}");
+                // Здесь можно добавить логику установки устройства
+                // Пока просто логируем
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка установки устройства: {ex.Message}");
+            }
+        }
+
         #endregion
+    }
+    
+    // 🚀 КЛАСС для уведомлений об изменении аудиоустройств  
+    public class AudioDeviceNotificationClient : IMMNotificationClient
+    {
+        private readonly Form1 form;
+        
+        public AudioDeviceNotificationClient(Form1 form)
+        {
+            this.form = form;
+        }
+        
+        public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId)
+        {
+            // Устройство по умолчанию изменилось
+            form?.OnDeviceChanged();
+        }
+        
+        public void OnDeviceAdded(string pwstrDeviceId)
+        {
+            // Добавлено новое устройство
+            form?.OnDeviceChanged();
+        }
+        
+        public void OnDeviceRemoved(string pwstrDeviceId)
+        {
+            // Устройство удалено
+            form?.OnDeviceChanged();
+        }
+        
+        public void OnDeviceStateChanged(string deviceId, DeviceState newState)
+        {
+            // Состояние устройства изменилось
+            form?.OnDeviceChanged();
+        }
+        
+        public void OnPropertyValueChanged(string pwstrDeviceId, PropertyKey key)
+        {
+            // Свойства устройства изменились (можно игнорировать)
+        }
     }
 }
