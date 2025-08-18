@@ -102,8 +102,7 @@ namespace test_speaker_stt_translate_tts
         
         // STT & Translation - Enhanced
         private static string WhisperModelPath => Path.Combine(Application.StartupPath, "models", "whisper", "ggml-small.bin");
-        private WhisperFactory? whisperFactory;
-        private WhisperProcessor? whisperProcessor;
+        // 🚀 УДАЛЕНЫ: Старые instance переменные, используем static _whisperFactory/_whisperProcessor
         private SpeechSynthesizer? speechSynthesizer;
         private TtsVoiceManager? ttsVoiceManager;
         private RestClient? googleTranslateClient;
@@ -543,26 +542,15 @@ namespace test_speaker_stt_translate_tts
 
         private void InitializeWhisperComponents()
         {
+            // 🚀 КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Используем Warm Whisper Instance
             try
             {
-                if (File.Exists(WhisperModelPath))
-                {
-                    whisperFactory = WhisperFactory.FromPath(WhisperModelPath);
-                    whisperProcessor = whisperFactory.CreateBuilder()
-                        .WithLanguage("ru") // Фиксированный русский для стабильности
-                        .WithProbabilities()
-                        .Build();
-                    
-                    LogMessage("✅ Whisper компоненты инициализированы (русский язык)");
-                }
-                else
-                {
-                    LogMessage("⚠️ Whisper модель не найдена, STT недоступен");
-                }
+                EnsureWhisperReady(); // Один раз инициализируем теплый экземпляр
+                LogMessage("✅ Warm Whisper instance готов (статическая инициализация)");
             }
             catch (Exception ex)
             {
-                LogMessage($"❌ Ошибка инициализации Whisper: {ex.Message}");
+                LogMessage($"❌ Ошибка инициализации Warm Whisper: {ex.Message}");
             }
         }
 
@@ -3590,7 +3578,7 @@ namespace test_speaker_stt_translate_tts
         {
             try
             {
-                if (whisperProcessor == null || audioData == null || audioData.Length == 0)
+                if (_whisperProcessor == null || audioData == null || audioData.Length == 0)
                     return null;
 
                 LogMessage($"🎯 Обработка аудио сегмента: {audioData.Length} семплов ({(float)audioData.Length / 16000:F2}с)");
@@ -3623,7 +3611,7 @@ namespace test_speaker_stt_translate_tts
 
                 // STT обработка
                 var segments = new List<string>();
-                await foreach (var segment in whisperProcessor.ProcessAsync(audioStream, ct))
+                await foreach (var segment in _whisperProcessor.ProcessAsync(audioStream, ct))
                 {
                     if (!string.IsNullOrWhiteSpace(segment.Text))
                     {
@@ -4096,34 +4084,8 @@ namespace test_speaker_stt_translate_tts
                     }
                 }
 
-                // Очистка Whisper компонентов
-                if (whisperProcessor != null)
-                {
-                    try
-                    {
-                        whisperProcessor.Dispose();
-                        whisperProcessor = null;
-                        Debug.WriteLine("✅ Whisper Processor очищен");
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"⚠️ Ошибка очистки Whisper Processor: {ex.Message}");
-                    }
-                }
-
-                if (whisperFactory != null)
-                {
-                    try
-                    {
-                        whisperFactory.Dispose();
-                        whisperFactory = null;
-                        Debug.WriteLine("✅ Whisper Factory очищен");
-                    }
-                    catch (Exception ex)
-                    {
-                        Debug.WriteLine($"⚠️ Ошибка очистки Whisper Factory: {ex.Message}");
-                    }
-                }
+                // 🚀 КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Очистка Warm Whisper Resources
+                CleanupWhisperResources();
 
                 Debug.WriteLine("✅ Все стабильные компоненты очищены");
             }
