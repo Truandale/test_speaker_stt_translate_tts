@@ -102,6 +102,9 @@ namespace test_speaker_stt_translate_tts
         
         // Guide window management
         private static Form? guideWindow = null;
+
+        // Токен отмены для экстренной остановки тестирования
+        private CancellationTokenSource? testingCancellationTokenSource;
         
         // STT & Translation - Enhanced
         private static string WhisperModelPath => Path.Combine(Application.StartupPath, "models", "whisper", "ggml-small.bin");
@@ -1117,6 +1120,17 @@ namespace test_speaker_stt_translate_tts
                 "• Автопозиционирование на втором мониторе\n" +
                 "• Всегда сверху для удобства");
 
+            // Экстренная остановка
+            var emergencyTooltip = new ToolTip();
+            emergencyTooltip.SetToolTip(btnEmergencyStop, 
+                "Экстренная остановка всех тестов (ESC)\n" +
+                "• Немедленная остановка всех диагностик\n" +
+                "• Отключение бесконечных тестов\n" +
+                "• Остановка аудио захвата\n" +
+                "• Очистка памяти и каналов\n" +
+                "• Сброс состояния системы\n" +
+                "• ИСПОЛЬЗУЙТЕ при зависании тестов!");
+
             // Настройка горячих клавиш
             this.KeyPreview = true;
             this.KeyDown += (s, e) => {
@@ -1157,6 +1171,11 @@ namespace test_speaker_stt_translate_tts
                 else if (e.KeyCode == Keys.F10)
                 {
                     ShowTestingGuide();
+                    e.Handled = true;
+                }
+                else if (e.KeyCode == Keys.Escape)
+                {
+                    EmergencyStopAllTesting();
                     e.Handled = true;
                 }
             };
@@ -5492,16 +5511,143 @@ namespace test_speaker_stt_translate_tts
 
         private void btnAllDiag_Click(object sender, EventArgs e)
         {
-            // Запускаем все диагностики подряд
-            Task.Run(() => {
-                TriggerSelfDiagnostics();
-                Task.Delay(1000).Wait();
-                RunPerformanceDiagnostics();
-                Task.Delay(1000).Wait();
-                RunAdvancedDiagnostics();
-                Task.Delay(1000).Wait();
-                RunTextFilterValidation();
-            });
+            // Создаем новый токен отмены для этой серии тестов
+            testingCancellationTokenSource?.Cancel();
+            testingCancellationTokenSource = new CancellationTokenSource();
+            var cancellationToken = testingCancellationTokenSource.Token;
+            
+            // Запускаем все диагностики подряд с поддержкой отмены
+            Task.Run(async () => {
+                try
+                {
+                    LogMessage("🎯 Запуск комплексной диагностики (все тесты подряд)...");
+                    
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        TriggerSelfDiagnostics();
+                        await Task.Delay(1000, cancellationToken);
+                    }
+                    
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        RunPerformanceDiagnostics();
+                        await Task.Delay(1000, cancellationToken);
+                    }
+                    
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        RunAdvancedDiagnostics();
+                        await Task.Delay(1000, cancellationToken);
+                    }
+                    
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        RunTextFilterValidation();
+                    }
+                    
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        LogMessage("✅ Комплексная диагностика успешно завершена!");
+                    }
+                }
+                catch (OperationCanceledException)
+                {
+                    LogMessage("⚠️ Комплексная диагностика была отменена пользователем");
+                }
+                catch (Exception ex)
+                {
+                    LogMessage($"❌ Ошибка в комплексной диагностике: {ex.Message}");
+                }
+            }, cancellationToken);
+        }
+
+        private void btnEmergencyStop_Click(object sender, EventArgs e)
+        {
+            EmergencyStopAllTesting();
+        }
+
+        /// <summary>
+        /// Экстренная остановка всех тестов и диагностики
+        /// </summary>
+        private void EmergencyStopAllTesting()
+        {
+            try
+            {
+                LogMessage("🚨 ЭКСТРЕННАЯ ОСТАНОВКА ВСЕХ ТЕСТОВ!");
+                
+                // 1. Отменяем токен для всех активных тестов
+                if (testingCancellationTokenSource != null)
+                {
+                    testingCancellationTokenSource.Cancel();
+                    LogMessage("✅ Токен отмены активирован");
+                }
+                
+                // 2. Останавливаем бесконечные тесты
+                if (chkInfiniteTests.Checked)
+                {
+                    chkInfiniteTests.Checked = false;
+                    LogMessage("✅ Бесконечные тесты отключены");
+                }
+                
+                // 3. Останавливаем аудио захват если активен
+                if (isCapturing && stableAudioCapture != null)
+                {
+                    Task.Run(async () => {
+                        try
+                        {
+                            await stableAudioCapture.StopCaptureAsync();
+                            LogMessage("✅ Аудио захват остановлен");
+                        }
+                        catch (Exception ex)
+                        {
+                            LogMessage($"⚠️ Ошибка при остановке аудио: {ex.Message}");
+                        }
+                    });
+                }
+                
+                // 4. Сбрасываем статус
+                this.Invoke(() => {
+                    lblStatus.Text = "🔇 Готов к захвату";
+                    lblStatus.ForeColor = Color.Blue;
+                    btnStartCapture.Enabled = true;
+                    btnStopCapture.Enabled = false;
+                });
+                
+                // 5. Очищаем каналы обработки
+                Task.Run(() => {
+                    try
+                    {
+                        // Очистка Bounded Channels (если есть активные)
+                        GC.Collect();
+                        GC.WaitForPendingFinalizers();
+                        LogMessage("✅ Память очищена");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogMessage($"⚠️ Ошибка очистки памяти: {ex.Message}");
+                    }
+                });
+                
+                LogMessage("🎯 Экстренная остановка завершена. Система готова к работе.");
+                
+                // 6. Показываем уведомление пользователю
+                this.Invoke(() => {
+                    lblStats.Text = "📊 Статистика: тестирование экстренно остановлено";
+                    lblStats.ForeColor = Color.Red;
+                    
+                    // Через 3 секунды возвращаем нормальный цвет
+                    Task.Delay(3000).ContinueWith(_ => {
+                        this.Invoke(() => {
+                            lblStats.ForeColor = Color.Black;
+                        });
+                    });
+                });
+                
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Критическая ошибка при экстренной остановке: {ex.Message}");
+            }
         }
 
         /// <summary>

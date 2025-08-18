@@ -60,6 +60,7 @@
             btnAdvancedDiag = new Button();
             btnTextFilterValidation = new Button();
             btnAllDiag = new Button();
+            btnEmergencyStop = new Button();
             ((System.ComponentModel.ISupportInitialize)numThreshold).BeginInit();
             SuspendLayout();
             // 
@@ -433,11 +434,25 @@
             btnAllDiag.UseVisualStyleBackColor = false;
             btnAllDiag.Click += btnAllDiag_Click;
             // 
+            // btnEmergencyStop
+            // 
+            btnEmergencyStop.BackColor = Color.Red;
+            btnEmergencyStop.Font = new Font("Segoe UI", 8F, FontStyle.Bold);
+            btnEmergencyStop.ForeColor = Color.White;
+            btnEmergencyStop.Location = new Point(990, 12);
+            btnEmergencyStop.Margin = new Padding(4, 3, 4, 3);
+            btnEmergencyStop.Name = "btnEmergencyStop";
+            btnEmergencyStop.Size = new Size(80, 30);
+            btnEmergencyStop.TabIndex = 32;
+            btnEmergencyStop.Text = "🚨 СТОП";
+            btnEmergencyStop.UseVisualStyleBackColor = false;
+            btnEmergencyStop.Click += btnEmergencyStop_Click;
+            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(120F, 120F);
             AutoScaleMode = AutoScaleMode.Dpi;
-            ClientSize = new Size(1000, 712);
+            ClientSize = new Size(1080, 712);
             Controls.Add(txtLogs);
             Controls.Add(lblLogs);
             Controls.Add(progressBar);
@@ -453,6 +468,7 @@
             Controls.Add(btnAdvancedDiag);
             Controls.Add(btnTextFilterValidation);
             Controls.Add(btnAllDiag);
+            Controls.Add(btnEmergencyStop);
             Controls.Add(lblStats);
             Controls.Add(lblProcessingMode);
             Controls.Add(cbProcessingMode);
@@ -517,5 +533,6 @@
         private Button btnAdvancedDiag;
         private Button btnTextFilterValidation;
         private Button btnAllDiag;
+        private Button btnEmergencyStop;
     }
 }
