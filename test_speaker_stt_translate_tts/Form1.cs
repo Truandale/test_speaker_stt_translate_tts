@@ -1753,8 +1753,24 @@ namespace test_speaker_stt_translate_tts
                 
                 LogMessage($"🎯 Сегмент #{sequenceNumber} - Начало STT обработки ({audioData.Length} байт)");
                 
+                // Анализируем качество аудио данных
+                AnalyzeAudioQuality(audioData, sequenceNumber);
+                
                 // Convert to WAV format for Whisper
                 var wavData = ConvertToWav(audioData);
+                
+                if (wavData.Length == 0)
+                {
+                    LogMessage($"❌ Сегмент #{sequenceNumber} - Конвертация WAV неудачна");
+                    
+                    Invoke(() => {
+                        txtRecognizedText.Text = "❌ Ошибка конвертации аудио";
+                        progressBar.Visible = false;
+                    });
+                    
+                    return;
+                }
+                
                 LogMessage($"🔄 Сегмент #{sequenceNumber} - Конвертация в WAV: {wavData.Length} байт");
 
                 // Perform STT with Whisper.NET
@@ -1816,10 +1832,10 @@ namespace test_speaker_stt_translate_tts
                 {
                     using var whisperFactory = WhisperFactory.FromPath(WhisperModelPath);
                     using var processor = whisperFactory.CreateBuilder()
-                        .WithLanguage("auto") // Автоматическое определение языка
-                        .WithPrompt("This is human speech") // Фокус на человеческой речи
+                        .WithLanguage("ru") // Фиксированный русский язык для стабильности
+                        .WithPrompt("Это человеческая речь на русском языке") // Русская подсказка
                         .WithProbabilities() // Включаем вероятности для фильтрации
-                        .WithTemperature(0.0f) // Минимальная температура для стабильности
+                        .WithTemperature(0.1f) // Немного увеличим для лучшего распознавания
                         .Build();
 
                     LogMessage("🔄 Обработка аудио через Whisper...");
@@ -1847,7 +1863,24 @@ namespace test_speaker_stt_translate_tts
                         }
                     }
                     
-                    return result.ToString().Trim();
+                    string finalResult = result.ToString().Trim();
+                    
+                    // Финальная проверка результата
+                    if (string.IsNullOrWhiteSpace(finalResult))
+                    {
+                        LogMessage("⚠️ Whisper вернул пустой результат");
+                        return string.Empty;
+                    }
+                    
+                    // Проверяем на мусор в финальном результате
+                    if (IsPlaceholderToken(finalResult))
+                    {
+                        LogMessage($"🚫 Финальный результат отфильтрован как мусор: '{finalResult}'");
+                        return string.Empty;
+                    }
+                    
+                    LogMessage($"✅ Whisper результат принят: '{finalResult}'");
+                    return finalResult;
                 }
                 finally
                 {
@@ -1881,7 +1914,53 @@ namespace test_speaker_stt_translate_tts
 
         private bool IsPlaceholderToken(string text)
         {
-            // 🚀 Используем продвинутый европейский фильтр с debug логированием
+            // Быстрая проверка на пустоту
+            if (string.IsNullOrWhiteSpace(text))
+                return true;
+                
+            text = text.Trim();
+            
+            // Проверка на специальные маркеры
+            string[] specialTokens = {
+                "[Music]", "[Музыка]", "[музыка]", 
+                "[BLANK_AUDIO]", "[Sound]", "[Звук]",
+                "[Bell rings]", "[звук колокола]",
+                "[Sounds of a camera]", "[звук камеры]",
+                "[oh wait]", "[Growling]", "[рычание]",
+                "[BIRDS CHIRPING]", "[пение птиц]",
+                "This is human speech", "Это человеческая речь",
+                "(snoring)", "(храп)", "(끝)", "(음악)",
+                "Bye.", "До свидания.", "...", "ʕ", "ʔ"
+            };
+            
+            foreach (var token in specialTokens)
+            {
+                if (text.Contains(token, StringComparison.OrdinalIgnoreCase))
+                {
+                    DebugLogSpeechValidation($"� Обнаружен специальный токен: '{token}' в '{text}'");
+                    return true;
+                }
+            }
+            
+            // Проверка на слишком много неалфавитных символов (гарантированно мусор)
+            int totalChars = text.Length;
+            int nonAlphaCount = text.Count(c => !char.IsLetter(c) && !char.IsWhiteSpace(c));
+            float nonAlphaRatio = (float)nonAlphaCount / totalChars;
+            
+            if (nonAlphaRatio > 0.3f) // Более 30% неалфавитных символов
+            {
+                DebugLogSpeechValidation($"🚫 Слишком много неалфавитных символов: {nonAlphaRatio:P} в '{text}'");
+                return true;
+            }
+            
+            // Проверка на Unicode символы вне обычных диапазонов
+            if (ContainsUnusualUnicode(text))
+            {
+                DebugLogSpeechValidation($"🚫 Обнаружены необычные Unicode символы в '{text}'");
+                return true;
+            }
+            
+            // �🚀 Используем продвинутый европейский фильтр с debug логированием
             DebugLogSpeechValidation($"🔍 Проверка на заглушку: '{text}'");
             
             bool isValid = EuropeanLanguageFilter.IsValidEuropeanSpeech(text);
@@ -1890,6 +1969,91 @@ namespace test_speaker_stt_translate_tts
             DebugLogSpeechValidation($"📊 Заглушка: IsValid={isValid}, IsPlaceholder={isPlaceholder}");
             
             return isPlaceholder;
+        }
+        
+        private bool ContainsUnusualUnicode(string text)
+        {
+            foreach (char c in text)
+            {
+                // Разрешенные диапазоны: базовая латиница, кириллица, знаки препинания
+                if (char.IsWhiteSpace(c) || char.IsPunctuation(c) || char.IsDigit(c))
+                    continue;
+                    
+                int code = (int)c;
+                
+                // Базовая латиница (A-Z, a-z)
+                if ((code >= 0x0041 && code <= 0x005A) || (code >= 0x0061 && code <= 0x007A))
+                    continue;
+                    
+                // Кириллица
+                if (code >= 0x0400 && code <= 0x04FF)
+                    continue;
+                    
+                // Расширенная латиница (европейские языки)
+                if (code >= 0x00C0 && code <= 0x024F)
+                    continue;
+                    
+                // Если символ вне этих диапазонов - подозрительно
+                return true;
+            }
+            
+            return false;
+        }
+        
+        private void AnalyzeAudioQuality(byte[] audioData, int sequenceNumber)
+        {
+            try
+            {
+                if (audioData.Length < 4)
+                {
+                    LogMessage($"⚠️ Сегмент #{sequenceNumber} - Слишком короткий для анализа");
+                    return;
+                }
+                
+                // Анализируем 32-bit float данные
+                float maxLevel = 0f;
+                float sumSquares = 0f;
+                int sampleCount = audioData.Length / 4;
+                int silentSamples = 0;
+                
+                for (int i = 0; i < audioData.Length - 3; i += 4)
+                {
+                    float sample = BitConverter.ToSingle(audioData, i);
+                    float absLevel = Math.Abs(sample);
+                    
+                    maxLevel = Math.Max(maxLevel, absLevel);
+                    sumSquares += sample * sample;
+                    
+                    if (absLevel < 0.001f) // Практически тишина
+                        silentSamples++;
+                }
+                
+                float rms = (float)Math.Sqrt(sumSquares / sampleCount);
+                float silenceRatio = (float)silentSamples / sampleCount;
+                float durationSeconds = sampleCount / 44100f;
+                
+                LogMessage($"📊 Сегмент #{sequenceNumber} - Качество аудио:");
+                LogMessage($"   └ Длительность: {durationSeconds:F2}с, Семплов: {sampleCount}");
+                LogMessage($"   └ Max уровень: {maxLevel:F3}, RMS: {rms:F3}");
+                LogMessage($"   └ Тишина: {silenceRatio:P1} ({silentSamples}/{sampleCount})");
+                
+                // Предупреждения о проблемах
+                if (silenceRatio > 0.8f)
+                    LogMessage($"⚠️ Сегмент #{sequenceNumber} - Слишком много тишины!");
+                    
+                if (maxLevel < 0.01f)
+                    LogMessage($"⚠️ Сегмент #{sequenceNumber} - Очень тихий сигнал!");
+                    
+                if (maxLevel > 0.9f)
+                    LogMessage($"⚠️ Сегмент #{sequenceNumber} - Возможны искажения!");
+                    
+                if (durationSeconds < 0.5f)
+                    LogMessage($"⚠️ Сегмент #{sequenceNumber} - Очень короткий для качественного распознавания!");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка анализа аудио: {ex.Message}");
+            }
         }
 
         private byte[] ConvertToWav(byte[] audioData)
@@ -1904,25 +2068,50 @@ namespace test_speaker_stt_translate_tts
                 const int channels = 1;
                 const int bitsPerSample = 16;
                 
-                // Конвертируем float32 в int16 с ресамплингом
+                // Проверяем минимальную длину аудио
+                if (audioData.Length < 4000) // Менее 250мс при 16кГц
+                {
+                    LogMessage($"⚠️ Слишком короткий аудиосегмент: {audioData.Length} байт");
+                    return new byte[0];
+                }
+                
+                // Конвертируем float32 в int16 с улучшенным ресамплингом
                 var samples = new List<short>();
                 
-                // Простой downsampling: берем каждый (44100/16000) ≈ 2.75-й семпл
+                // Улучшенный linear interpolation для ресамплинга
                 float ratio = (float)sourceSampleRate / targetSampleRate;
+                int sourceLength = audioData.Length / 4;
+                int targetLength = (int)(sourceLength / ratio);
                 
-                for (int i = 0; i < audioData.Length - 3; i += 4)
+                for (int i = 0; i < targetLength; i++)
                 {
-                    float floatSample = BitConverter.ToSingle(audioData, i);
+                    float srcIndex = i * ratio;
+                    int srcIndexInt = (int)srcIndex;
+                    float fraction = srcIndex - srcIndexInt;
+                    
+                    if (srcIndexInt >= sourceLength - 1)
+                        break;
+                        
+                    // Получаем два семпла для интерполяции
+                    float sample1 = BitConverter.ToSingle(audioData, srcIndexInt * 4);
+                    float sample2 = srcIndexInt + 1 < sourceLength ? 
+                        BitConverter.ToSingle(audioData, (srcIndexInt + 1) * 4) : sample1;
+                    
+                    // Linear interpolation
+                    float interpolated = sample1 + (sample2 - sample1) * fraction;
                     
                     // Ограничиваем диапазон и конвертируем в 16-bit
-                    floatSample = Math.Max(-1.0f, Math.Min(1.0f, floatSample));
-                    short intSample = (short)(floatSample * 32767f);
+                    interpolated = Math.Max(-1.0f, Math.Min(1.0f, interpolated));
+                    short intSample = (short)(interpolated * 32767f);
                     
-                    // Применяем простой downsampling
-                    if (samples.Count < (i / 4) / ratio)
-                    {
-                        samples.Add(intSample);
-                    }
+                    samples.Add(intSample);
+                }
+                
+                // Проверяем результат ресамплинга
+                if (samples.Count == 0)
+                {
+                    LogMessage("❌ Ресамплинг не дал результатов");
+                    return new byte[0];
                 }
                 
                 // Создаем WAV файл с правильным заголовком
@@ -1953,12 +2142,14 @@ namespace test_speaker_stt_translate_tts
                     wav.AddRange(BitConverter.GetBytes(sample));
                 }
                 
+                LogMessage($"✅ WAV конвертация: {audioData.Length} → {wav.Count} байт, {samples.Count} семплов");
+                
                 return wav.ToArray();
             }
             catch (Exception ex)
             {
                 LogMessage($"❌ Ошибка конвертации WAV: {ex.Message}");
-                return audioData; // Fallback: возвращаем исходные данные
+                return new byte[0]; // Возвращаем пустой массив вместо исходных данных
             }
         }
 
