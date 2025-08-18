@@ -54,6 +54,7 @@ namespace test_speaker_stt_translate_tts
         
         private volatile bool isTTSActive = false; // Для отслеживания активных TTS операций
         private DateTime lastVoiceActivity = DateTime.Now;
+        private DateTime _lastDropLogTime = DateTime.MinValue;
         
         // 🚀 КРИТИЧЕСКАЯ ОПТИМИЗАЦИЯ: Теплый Whisper instance
         private static readonly object _whisperLock = new();
@@ -635,7 +636,12 @@ namespace test_speaker_stt_translate_tts
                             // Отправляем в следующий этап с backpressure
                             if (!_mono16kChannel.Writer.TryWrite(floatData))
                             {
-                                LogMessage("⚠️ Нормализация: канал переполнен, старые данные сброшены");
+                                LogMessage("⚠️ 🔴 ДРОП: Нормализация - канал 16kHz переполнен! Старые данные сброшены");
+                            }
+                            else
+                            {
+                                int queueEstimate = _mono16kChannel.Reader.Count;
+                                LogMessageDebug($"🔊 16kHz данные отправлены в канал, очередь ≈{queueEstimate}");
                             }
                         }
                     }
@@ -695,7 +701,12 @@ namespace test_speaker_stt_translate_tts
                                 // Отправляем в следующий этап с backpressure
                                 if (!_sttChannel.Writer.TryWrite(finalText))
                                 {
-                                    LogMessage("⚠️ STT: канал переполнен, старые данные сброшены");
+                                    LogMessage($"⚠️ 🔴 ДРОП: STT канал переполнен! Текст сброшен: '{finalText.Substring(0, Math.Min(50, finalText.Length))}...'");
+                                }
+                                else
+                                {
+                                    int queueEstimate = _sttChannel.Reader.Count;
+                                    LogMessageDebug($"💬 STT текст отправлен в канал, очередь ≈{queueEstimate}");
                                 }
                             }
                         }
@@ -1843,11 +1854,19 @@ namespace test_speaker_stt_translate_tts
                     // 🚀 ОТПРАВЛЯЕМ В КАНАЛ ВМЕСТО ПРЯМОЙ ОБРАБОТКИ
                     if (_captureChannel.Writer.TryWrite(audioChunk))
                     {
-                        LogMessageDebug($"📊 Аудио отправлено в канал: {audioChunk.Length} байт");
+                        // Получаем приблизительную статистику канала
+                        int queueEstimate = _captureChannel.Reader.Count;
+                        LogMessageDebug($"📊 Аудио отправлено в канал: {audioChunk.Length} байт, очередь ≈{queueEstimate}");
                     }
                     else
                     {
-                        LogMessage("⚠️ Канал захвата переполнен, данные сброшены");
+                        LogMessage("⚠️ 🔴 ДРОП: Канал захвата переполнен! Аудиоданные сброшены из-за backpressure");
+                        // Статистика дропов для мониторинга
+                        if (DateTime.Now.Subtract(_lastDropLogTime).TotalSeconds > 5)
+                        {
+                            LogMessage($"📈 СТАТИСТИКА: Дропы в аудиоканале за последние 5 сек");
+                            _lastDropLogTime = DateTime.Now;
+                        }
                     }
                 }
                 else if (isCollectingAudio)
@@ -2531,12 +2550,23 @@ namespace test_speaker_stt_translate_tts
                 }
             }
             
-            // 🔥 МЕНЕЕ АГРЕССИВНАЯ проверка на мусорные символы (повышен порог)
+            // 🔥 УЛУЧШЕННАЯ МЕТРИКА: главная - доля букв (по рекомендации анализа)
             int totalChars = text.Length;
+            int letterCount = text.Count(char.IsLetter);
+            float letterShare = (float)letterCount / totalChars;
+            
+            // Первичная проверка: минимум букв и их доля
+            if (letterCount < 3 || letterShare < 0.5f)
+            {
+                DebugLogSpeechValidation($"🚫 Недостаточно букв: {letterCount} букв, доля {letterShare:P} в '{text}'");
+                return true;
+            }
+            
+            // Вторичная проверка: мусорные символы (повышен порог как вспомогательный)
             int nonAlphaCount = text.Count(c => !char.IsLetter(c) && !char.IsWhiteSpace(c) && !char.IsPunctuation(c));
             float nonAlphaRatio = (float)nonAlphaCount / totalChars;
             
-            if (nonAlphaRatio > 0.5f) // ПОВЫШЕН с 30% до 50%
+            if (nonAlphaRatio > 0.45f) // Вспомогательный порог, повышен как рекомендовано
             {
                 DebugLogSpeechValidation($"🚫 Слишком много мусорных символов: {nonAlphaRatio:P} в '{text}'");
                 return true;
@@ -2875,7 +2905,10 @@ namespace test_speaker_stt_translate_tts
                 writer.Flush();
                 var result = outputStream.ToArray();
                 
+                // 🔍 ДЕТАЛЬНОЕ ЛОГИРОВАНИЕ ФОРМАТА (по рекомендации анализа)
                 LogMessage($"✅ Нормализация завершена: {inputPcm.Length} → {result.Length} байт");
+                LogMessage($"📊 Выходной формат перед Whisper: {targetFormat.SampleRate}Hz, {targetFormat.Channels}ch, {targetFormat.BitsPerSample}bit, Encoding={targetFormat.Encoding}");
+                
                 return result;
             }
             catch (Exception ex)
@@ -3474,7 +3507,7 @@ namespace test_speaker_stt_translate_tts
             }
         }
 
-        private void LogMessage(string message)
+        public void LogMessage(string message)
         {
             string timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
             string logEntry = $"[{timestamp}] {message}";
@@ -4294,6 +4327,14 @@ namespace test_speaker_stt_translate_tts
             // Вызывается при изменении аудиоустройств
             LogMessage("🔄 Обнаружено изменение аудиоустройств - переподключение...");
             
+            // Валидация: проверяем, что мы не в UI потоке (вызывается из уведомлений системы)
+            if (InvokeRequired)
+            {
+                LogMessage("⚠️ OnDeviceChanged вызван из не-UI потока - переносим в UI поток");
+                Invoke(new Action(OnDeviceChanged));
+                return;
+            }
+            
             Task.Run(async () =>
             {
                 await Task.Delay(1000); // Короткая пауза для стабилизации
@@ -4302,6 +4343,14 @@ namespace test_speaker_stt_translate_tts
                 {
                     Invoke(() =>
                     {
+                        // Валидация: проверяем состояние перед переподключением
+                        bool wasCapturing = isCapturing;
+                        string currentDeviceName = cbSpeakerDevices.SelectedItem is AudioDevice currentDevice 
+                            ? currentDevice.Name 
+                            : "Не выбрано";
+                        
+                        LogMessage($"📊 Состояние до переподключения: запись={wasCapturing}, устройство={currentDeviceName}");
+                        
                         StopRecording(); // Остановить текущую запись
                         RefreshAudioDevices(); // Обновить список устройств
                         
@@ -4311,6 +4360,17 @@ namespace test_speaker_stt_translate_tts
                             var bestDevice = availableSpeakerDevices.First();
                             SetSpeakerDevice(bestDevice);
                             LogMessage($"🔄 Автоматически переподключен к: {bestDevice.FriendlyName}");
+                            
+                            // Валидация: если запись была активна, автоматически возобновляем
+                            if (wasCapturing)
+                            {
+                                LogMessage("🎤 Возобновляем запись после переподключения устройства");
+                                Task.Delay(500).ContinueWith(_ => Invoke(() => StartAudioCapture()));
+                            }
+                        }
+                        else
+                        {
+                            LogMessage("⚠️ Нет доступных аудиоустройств после изменения!");
                         }
                     });
                 }
@@ -4396,26 +4456,67 @@ namespace test_speaker_stt_translate_tts
         
         public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId)
         {
-            // Устройство по умолчанию изменилось
-            form?.OnDeviceChanged();
+            try
+            {
+                // Устройство по умолчанию изменилось
+                form?.Invoke(new Action(() => {
+                    form.LogMessage($"🔄 Устройство по умолчанию изменено: {flow} роль {role}, ID: {defaultDeviceId ?? "null"}");
+                    form.OnDeviceChanged();
+                }));
+            }
+            catch (Exception ex)
+            {
+                // Безопасное логирование ошибок без вызова UI из другого потока
+                System.Diagnostics.Debug.WriteLine($"OnDefaultDeviceChanged error: {ex.Message}");
+            }
         }
         
         public void OnDeviceAdded(string pwstrDeviceId)
         {
-            // Добавлено новое устройство
-            form?.OnDeviceChanged();
+            try
+            {
+                // Добавлено новое устройство
+                form?.Invoke(new Action(() => {
+                    form.LogMessage($"➕ Устройство добавлено: ID {pwstrDeviceId ?? "null"}");
+                    form.OnDeviceChanged();
+                }));
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"OnDeviceAdded error: {ex.Message}");
+            }
         }
         
         public void OnDeviceRemoved(string pwstrDeviceId)
         {
-            // Устройство удалено
-            form?.OnDeviceChanged();
+            try
+            {
+                // Устройство удалено
+                form?.Invoke(new Action(() => {
+                    form.LogMessage($"➖ Устройство удалено: ID {pwstrDeviceId ?? "null"}");
+                    form.OnDeviceChanged();
+                }));
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"OnDeviceRemoved error: {ex.Message}");
+            }
         }
         
         public void OnDeviceStateChanged(string deviceId, DeviceState newState)
         {
-            // Состояние устройства изменилось
-            form?.OnDeviceChanged();
+            try
+            {
+                // Состояние устройства изменилось
+                form?.Invoke(new Action(() => {
+                    form.LogMessage($"🔧 Состояние устройства изменено: ID {deviceId ?? "null"} → {newState}");
+                    form.OnDeviceChanged();
+                }));
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"OnDeviceStateChanged error: {ex.Message}");
+            }
         }
         
         public void OnPropertyValueChanged(string pwstrDeviceId, PropertyKey key)
