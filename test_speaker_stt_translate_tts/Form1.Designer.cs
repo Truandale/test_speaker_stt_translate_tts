@@ -28,326 +28,383 @@
         /// </summary>
         private void InitializeComponent()
         {
-            this.btnStartCapture = new Button();
-            this.btnStopCapture = new Button();
-            this.lblStatus = new Label();
-            this.txtRecognizedText = new TextBox();
-            this.txtTranslatedText = new TextBox();
-            this.lblRecognized = new Label();
-            this.lblTranslated = new Label();
-            this.progressBar = new ProgressBar();
-            this.cbSpeakerDevices = new ComboBox();
-            this.lblSpeakers = new Label();
-            this.txtLogs = new TextBox();
-            this.lblLogs = new Label();
-            this.cbSourceLang = new ComboBox();
-            this.cbTargetLang = new ComboBox();
-            this.lblSourceLang = new Label();
-            this.lblTargetLang = new Label();
-            this.numThreshold = new NumericUpDown();
-            this.lblThreshold = new Label();
-            this.btnTestTTS = new Button();
-            this.chkAutoTranslate = new CheckBox();
-            this.lblAudioLevel = new Label();
-            this.progressAudioLevel = new ProgressBar();
-            this.cbProcessingMode = new ComboBox();
-            this.lblProcessingMode = new Label();
-            this.lblStats = new Label();
-            ((System.ComponentModel.ISupportInitialize)(this.numThreshold)).BeginInit();
-            this.SuspendLayout();
+            btnStartCapture = new Button();
+            btnStopCapture = new Button();
+            lblStatus = new Label();
+            txtRecognizedText = new TextBox();
+            txtTranslatedText = new TextBox();
+            lblRecognized = new Label();
+            lblTranslated = new Label();
+            progressBar = new ProgressBar();
+            cbSpeakerDevices = new ComboBox();
+            lblSpeakers = new Label();
+            txtLogs = new TextBox();
+            lblLogs = new Label();
+            cbSourceLang = new ComboBox();
+            cbTargetLang = new ComboBox();
+            lblSourceLang = new Label();
+            lblTargetLang = new Label();
+            numThreshold = new NumericUpDown();
+            lblThreshold = new Label();
+            btnTestTTS = new Button();
+            chkAutoTranslate = new CheckBox();
+            lblAudioLevel = new Label();
+            progressAudioLevel = new ProgressBar();
+            cbProcessingMode = new ComboBox();
+            lblProcessingMode = new Label();
+            lblStats = new Label();
+            chkInfiniteTests = new CheckBox();
+            btnTestingGuide = new Button();
+            ((System.ComponentModel.ISupportInitialize)numThreshold).BeginInit();
+            SuspendLayout();
             // 
             // btnStartCapture
             // 
-            this.btnStartCapture.BackColor = Color.LightGreen;
-            this.btnStartCapture.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
-            this.btnStartCapture.Location = new Point(12, 12);
-            this.btnStartCapture.Name = "btnStartCapture";
-            this.btnStartCapture.Size = new Size(150, 40);
-            this.btnStartCapture.TabIndex = 0;
-            this.btnStartCapture.Text = "🎧 Начать захват";
-            this.btnStartCapture.UseVisualStyleBackColor = false;
-            this.btnStartCapture.Click += this.btnStartCapture_Click;
+            btnStartCapture.BackColor = Color.LightGreen;
+            btnStartCapture.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
+            btnStartCapture.Location = new Point(15, 15);
+            btnStartCapture.Margin = new Padding(4, 4, 4, 4);
+            btnStartCapture.Name = "btnStartCapture";
+            btnStartCapture.Size = new Size(188, 50);
+            btnStartCapture.TabIndex = 0;
+            btnStartCapture.Text = "🎧 Начать захват";
+            btnStartCapture.UseVisualStyleBackColor = false;
+            btnStartCapture.Click += btnStartCapture_Click;
             // 
             // btnStopCapture
             // 
-            this.btnStopCapture.BackColor = Color.LightCoral;
-            this.btnStopCapture.Enabled = false;
-            this.btnStopCapture.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
-            this.btnStopCapture.Location = new Point(180, 12);
-            this.btnStopCapture.Name = "btnStopCapture";
-            this.btnStopCapture.Size = new Size(150, 40);
-            this.btnStopCapture.TabIndex = 1;
-            this.btnStopCapture.Text = "⏹️ Остановить";
-            this.btnStopCapture.UseVisualStyleBackColor = false;
-            this.btnStopCapture.Click += this.btnStopCapture_Click;
+            btnStopCapture.BackColor = Color.LightCoral;
+            btnStopCapture.Enabled = false;
+            btnStopCapture.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
+            btnStopCapture.Location = new Point(225, 15);
+            btnStopCapture.Margin = new Padding(4, 4, 4, 4);
+            btnStopCapture.Name = "btnStopCapture";
+            btnStopCapture.Size = new Size(188, 50);
+            btnStopCapture.TabIndex = 1;
+            btnStopCapture.Text = "⏹️ Остановить";
+            btnStopCapture.UseVisualStyleBackColor = false;
+            btnStopCapture.Click += btnStopCapture_Click;
             // 
             // lblStatus
             // 
-            this.lblStatus.AutoSize = true;
-            this.lblStatus.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
-            this.lblStatus.ForeColor = Color.Blue;
-            this.lblStatus.Location = new Point(350, 22);
-            this.lblStatus.Name = "lblStatus";
-            this.lblStatus.Size = new Size(130, 19);
-            this.lblStatus.TabIndex = 2;
-            this.lblStatus.Text = "🔇 Готов к захвату";
-            // 
-            // cbSpeakerDevices
-            // 
-            this.cbSpeakerDevices.DropDownStyle = ComboBoxStyle.DropDownList;
-            this.cbSpeakerDevices.Location = new Point(120, 70);
-            this.cbSpeakerDevices.Name = "cbSpeakerDevices";
-            this.cbSpeakerDevices.Size = new Size(350, 23);
-            this.cbSpeakerDevices.TabIndex = 3;
-            // 
-            // lblSpeakers
-            // 
-            this.lblSpeakers.AutoSize = true;
-            this.lblSpeakers.Location = new Point(12, 73);
-            this.lblSpeakers.Name = "lblSpeakers";
-            this.lblSpeakers.Size = new Size(102, 15);
-            this.lblSpeakers.TabIndex = 4;
-            this.lblSpeakers.Text = "🔊 Устройство:";
-            // 
-            // cbSourceLang
-            // 
-            this.cbSourceLang.DropDownStyle = ComboBoxStyle.DropDownList;
-            this.cbSourceLang.Location = new Point(120, 110);
-            this.cbSourceLang.Name = "cbSourceLang";
-            this.cbSourceLang.Size = new Size(120, 23);
-            this.cbSourceLang.TabIndex = 5;
-            // 
-            // lblSourceLang
-            // 
-            this.lblSourceLang.AutoSize = true;
-            this.lblSourceLang.Location = new Point(12, 113);
-            this.lblSourceLang.Name = "lblSourceLang";
-            this.lblSourceLang.Size = new Size(92, 15);
-            this.lblSourceLang.TabIndex = 6;
-            this.lblSourceLang.Text = "🌍 Из языка:";
-            // 
-            // cbTargetLang
-            // 
-            this.cbTargetLang.DropDownStyle = ComboBoxStyle.DropDownList;
-            this.cbTargetLang.Location = new Point(350, 110);
-            this.cbTargetLang.Name = "cbTargetLang";
-            this.cbTargetLang.Size = new Size(120, 23);
-            this.cbTargetLang.TabIndex = 7;
-            // 
-            // lblTargetLang
-            // 
-            this.lblTargetLang.AutoSize = true;
-            this.lblTargetLang.Location = new Point(260, 113);
-            this.lblTargetLang.Name = "lblTargetLang";
-            this.lblTargetLang.Size = new Size(84, 15);
-            this.lblTargetLang.TabIndex = 8;
-            this.lblTargetLang.Text = "🎯 На язык:";
-            // 
-            // numThreshold
-            // 
-            this.numThreshold.DecimalPlaces = 3;
-            this.numThreshold.Increment = new decimal(new int[] { 5, 0, 0, 196608 });
-            this.numThreshold.Location = new Point(600, 110);
-            this.numThreshold.Maximum = new decimal(new int[] { 1, 0, 0, 0 });
-            this.numThreshold.Minimum = new decimal(new int[] { 1, 0, 0, 196608 });
-            this.numThreshold.Name = "numThreshold";
-            this.numThreshold.Size = new Size(80, 23);
-            this.numThreshold.TabIndex = 9;
-            this.numThreshold.Value = new decimal(new int[] { 50, 0, 0, 196608 }); // 0.050
-            // 
-            // lblThreshold
-            // 
-            this.lblThreshold.AutoSize = true;
-            this.lblThreshold.Location = new Point(490, 113);
-            this.lblThreshold.Name = "lblThreshold";
-            this.lblThreshold.Size = new Size(104, 15);
-            this.lblThreshold.TabIndex = 10;
-            this.lblThreshold.Text = "🎚️ Порог звука:";
-            // 
-            // lblAudioLevel
-            // 
-            this.lblAudioLevel.AutoSize = true;
-            this.lblAudioLevel.Location = new Point(500, 73);
-            this.lblAudioLevel.Name = "lblAudioLevel";
-            this.lblAudioLevel.Size = new Size(94, 15);
-            this.lblAudioLevel.TabIndex = 11;
-            this.lblAudioLevel.Text = "📊 Уровень: 0%";
-            // 
-            // progressAudioLevel
-            // 
-            this.progressAudioLevel.Location = new Point(600, 70);
-            this.progressAudioLevel.Name = "progressAudioLevel";
-            this.progressAudioLevel.Size = new Size(180, 23);
-            this.progressAudioLevel.TabIndex = 12;
-            // 
-            // chkAutoTranslate
-            // 
-            this.chkAutoTranslate.AutoSize = true;
-            this.chkAutoTranslate.Checked = true;
-            this.chkAutoTranslate.CheckState = CheckState.Checked;
-            this.chkAutoTranslate.Location = new Point(300, 150);
-            this.chkAutoTranslate.Name = "chkAutoTranslate";
-            this.chkAutoTranslate.Size = new Size(151, 19);
-            this.chkAutoTranslate.TabIndex = 13;
-            this.chkAutoTranslate.Text = "🔄 Автоперевод + TTS";
-            this.chkAutoTranslate.UseVisualStyleBackColor = true;
-            // 
-            // cbProcessingMode
-            // 
-            this.cbProcessingMode.DropDownStyle = ComboBoxStyle.DropDownList;
-            this.cbProcessingMode.Location = new Point(120, 147);
-            this.cbProcessingMode.Name = "cbProcessingMode";
-            this.cbProcessingMode.Size = new Size(160, 23);
-            this.cbProcessingMode.TabIndex = 22;
-            // 
-            // lblProcessingMode
-            // 
-            this.lblProcessingMode.AutoSize = true;
-            this.lblProcessingMode.Location = new Point(12, 150);
-            this.lblProcessingMode.Name = "lblProcessingMode";
-            this.lblProcessingMode.Size = new Size(102, 15);
-            this.lblProcessingMode.TabIndex = 23;
-            this.lblProcessingMode.Text = "⚙️ Режим работы:";
-            // 
-            // lblStats
-            // 
-            this.lblStats.AutoSize = true;
-            this.lblStats.Font = new Font("Segoe UI", 8F);
-            this.lblStats.ForeColor = Color.Gray;
-            this.lblStats.Location = new Point(300, 150);
-            this.lblStats.Name = "lblStats";
-            this.lblStats.Size = new Size(200, 13);
-            this.lblStats.TabIndex = 24;
-            this.lblStats.Text = "📊 Статистика: готов к работе";
-            // 
-            // btnTestTTS
-            // 
-            this.btnTestTTS.Location = new Point(180, 147);
-            this.btnTestTTS.Name = "btnTestTTS";
-            this.btnTestTTS.Size = new Size(100, 25);
-            this.btnTestTTS.TabIndex = 14;
-            this.btnTestTTS.Text = "🔊 Тест TTS";
-            this.btnTestTTS.UseVisualStyleBackColor = true;
-            this.btnTestTTS.Click += this.btnTestTTS_Click;
-            // 
-            // lblRecognized
-            // 
-            this.lblRecognized.AutoSize = true;
-            this.lblRecognized.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-            this.lblRecognized.Location = new Point(12, 185);
-            this.lblRecognized.Name = "lblRecognized";
-            this.lblRecognized.Size = new Size(143, 15);
-            this.lblRecognized.TabIndex = 15;
-            this.lblRecognized.Text = "🎤 Распознанный текст:";
+            lblStatus.AutoSize = true;
+            lblStatus.Font = new Font("Segoe UI", 10F, FontStyle.Bold);
+            lblStatus.ForeColor = Color.Blue;
+            lblStatus.Location = new Point(15, 68);
+            lblStatus.Margin = new Padding(4, 0, 4, 0);
+            lblStatus.Name = "lblStatus";
+            lblStatus.Size = new Size(167, 23);
+            lblStatus.TabIndex = 2;
+            lblStatus.Text = "🔇 Готов к захвату";
             // 
             // txtRecognizedText
             // 
-            this.txtRecognizedText.BackColor = Color.LightYellow;
-            this.txtRecognizedText.Font = new Font("Segoe UI", 10F);
-            this.txtRecognizedText.Location = new Point(12, 205);
-            this.txtRecognizedText.Multiline = true;
-            this.txtRecognizedText.Name = "txtRecognizedText";
-            this.txtRecognizedText.ReadOnly = true;
-            this.txtRecognizedText.ScrollBars = ScrollBars.Vertical;
-            this.txtRecognizedText.Size = new Size(380, 80);
-            this.txtRecognizedText.TabIndex = 16;
-            this.txtRecognizedText.Text = "Ожидание распознавания...";
-            // 
-            // lblTranslated
-            // 
-            this.lblTranslated.AutoSize = true;
-            this.lblTranslated.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-            this.lblTranslated.Location = new Point(400, 185);
-            this.lblTranslated.Name = "lblTranslated";
-            this.lblTranslated.Size = new Size(132, 15);
-            this.lblTranslated.TabIndex = 17;
-            this.lblTranslated.Text = "🌐 Переведенный текст:";
+            txtRecognizedText.BackColor = Color.LightYellow;
+            txtRecognizedText.Font = new Font("Segoe UI", 10F);
+            txtRecognizedText.Location = new Point(15, 256);
+            txtRecognizedText.Margin = new Padding(4, 4, 4, 4);
+            txtRecognizedText.Multiline = true;
+            txtRecognizedText.Name = "txtRecognizedText";
+            txtRecognizedText.ReadOnly = true;
+            txtRecognizedText.ScrollBars = ScrollBars.Vertical;
+            txtRecognizedText.Size = new Size(474, 99);
+            txtRecognizedText.TabIndex = 16;
+            txtRecognizedText.Text = "Ожидание распознавания...";
             // 
             // txtTranslatedText
             // 
-            this.txtTranslatedText.BackColor = Color.LightCyan;
-            this.txtTranslatedText.Font = new Font("Segoe UI", 10F);
-            this.txtTranslatedText.Location = new Point(400, 205);
-            this.txtTranslatedText.Multiline = true;
-            this.txtTranslatedText.Name = "txtTranslatedText";
-            this.txtTranslatedText.ReadOnly = true;
-            this.txtTranslatedText.ScrollBars = ScrollBars.Vertical;
-            this.txtTranslatedText.Size = new Size(380, 80);
-            this.txtTranslatedText.TabIndex = 18;
-            this.txtTranslatedText.Text = "Ожидание перевода...";
+            txtTranslatedText.BackColor = Color.LightCyan;
+            txtTranslatedText.Font = new Font("Segoe UI", 10F);
+            txtTranslatedText.Location = new Point(500, 256);
+            txtTranslatedText.Margin = new Padding(4, 4, 4, 4);
+            txtTranslatedText.Multiline = true;
+            txtTranslatedText.Name = "txtTranslatedText";
+            txtTranslatedText.ReadOnly = true;
+            txtTranslatedText.ScrollBars = ScrollBars.Vertical;
+            txtTranslatedText.Size = new Size(474, 99);
+            txtTranslatedText.TabIndex = 18;
+            txtTranslatedText.Text = "Ожидание перевода...";
+            // 
+            // lblRecognized
+            // 
+            lblRecognized.AutoSize = true;
+            lblRecognized.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            lblRecognized.Location = new Point(15, 231);
+            lblRecognized.Margin = new Padding(4, 0, 4, 0);
+            lblRecognized.Name = "lblRecognized";
+            lblRecognized.Size = new Size(185, 20);
+            lblRecognized.TabIndex = 15;
+            lblRecognized.Text = "🎤 Распознанный текст:";
+            // 
+            // lblTranslated
+            // 
+            lblTranslated.AutoSize = true;
+            lblTranslated.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            lblTranslated.Location = new Point(500, 231);
+            lblTranslated.Margin = new Padding(4, 0, 4, 0);
+            lblTranslated.Name = "lblTranslated";
+            lblTranslated.Size = new Size(189, 20);
+            lblTranslated.TabIndex = 17;
+            lblTranslated.Text = "🌐 Переведенный текст:";
             // 
             // progressBar
             // 
-            this.progressBar.Location = new Point(12, 300);
-            this.progressBar.Name = "progressBar";
-            this.progressBar.Size = new Size(768, 23);
-            this.progressBar.Style = ProgressBarStyle.Marquee;
-            this.progressBar.TabIndex = 19;
-            this.progressBar.Visible = false;
+            progressBar.Location = new Point(15, 375);
+            progressBar.Margin = new Padding(4, 4, 4, 4);
+            progressBar.Name = "progressBar";
+            progressBar.Size = new Size(960, 29);
+            progressBar.Style = ProgressBarStyle.Marquee;
+            progressBar.TabIndex = 19;
+            progressBar.Visible = false;
             // 
-            // lblLogs
+            // cbSpeakerDevices
             // 
-            this.lblLogs.AutoSize = true;
-            this.lblLogs.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
-            this.lblLogs.Location = new Point(12, 335);
-            this.lblLogs.Name = "lblLogs";
-            this.lblLogs.Size = new Size(122, 15);
-            this.lblLogs.TabIndex = 20;
-            this.lblLogs.Text = "📝 Логи обработки:";
+            cbSpeakerDevices.DropDownStyle = ComboBoxStyle.DropDownList;
+            cbSpeakerDevices.Location = new Point(150, 88);
+            cbSpeakerDevices.Margin = new Padding(4, 4, 4, 4);
+            cbSpeakerDevices.Name = "cbSpeakerDevices";
+            cbSpeakerDevices.Size = new Size(436, 28);
+            cbSpeakerDevices.TabIndex = 3;
+            // 
+            // lblSpeakers
+            // 
+            lblSpeakers.AutoSize = true;
+            lblSpeakers.Location = new Point(15, 91);
+            lblSpeakers.Margin = new Padding(4, 0, 4, 0);
+            lblSpeakers.Name = "lblSpeakers";
+            lblSpeakers.Size = new Size(116, 20);
+            lblSpeakers.TabIndex = 4;
+            lblSpeakers.Text = "🔊 Устройство:";
             // 
             // txtLogs
             // 
-            this.txtLogs.BackColor = Color.Black;
-            this.txtLogs.Font = new Font("Consolas", 9F);
-            this.txtLogs.ForeColor = Color.Lime;
-            this.txtLogs.Location = new Point(12, 355);
-            this.txtLogs.Multiline = true;
-            this.txtLogs.Name = "txtLogs";
-            this.txtLogs.ReadOnly = true;
-            this.txtLogs.ScrollBars = ScrollBars.Vertical;
-            this.txtLogs.Size = new Size(768, 200);
-            this.txtLogs.TabIndex = 21;
+            txtLogs.BackColor = Color.Black;
+            txtLogs.Font = new Font("Consolas", 9F);
+            txtLogs.ForeColor = Color.Lime;
+            txtLogs.Location = new Point(15, 444);
+            txtLogs.Margin = new Padding(4, 4, 4, 4);
+            txtLogs.Multiline = true;
+            txtLogs.Name = "txtLogs";
+            txtLogs.ReadOnly = true;
+            txtLogs.ScrollBars = ScrollBars.Vertical;
+            txtLogs.Size = new Size(959, 249);
+            txtLogs.TabIndex = 21;
+            // 
+            // lblLogs
+            // 
+            lblLogs.AutoSize = true;
+            lblLogs.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            lblLogs.Location = new Point(15, 419);
+            lblLogs.Margin = new Padding(4, 0, 4, 0);
+            lblLogs.Name = "lblLogs";
+            lblLogs.Size = new Size(155, 20);
+            lblLogs.TabIndex = 20;
+            lblLogs.Text = "📝 Логи обработки:";
+            // 
+            // cbSourceLang
+            // 
+            cbSourceLang.DropDownStyle = ComboBoxStyle.DropDownList;
+            cbSourceLang.Location = new Point(150, 138);
+            cbSourceLang.Margin = new Padding(4, 4, 4, 4);
+            cbSourceLang.Name = "cbSourceLang";
+            cbSourceLang.Size = new Size(149, 28);
+            cbSourceLang.TabIndex = 5;
+            // 
+            // cbTargetLang
+            // 
+            cbTargetLang.DropDownStyle = ComboBoxStyle.DropDownList;
+            cbTargetLang.Location = new Point(438, 138);
+            cbTargetLang.Margin = new Padding(4, 4, 4, 4);
+            cbTargetLang.Name = "cbTargetLang";
+            cbTargetLang.Size = new Size(149, 28);
+            cbTargetLang.TabIndex = 7;
+            // 
+            // lblSourceLang
+            // 
+            lblSourceLang.AutoSize = true;
+            lblSourceLang.Location = new Point(15, 141);
+            lblSourceLang.Margin = new Padding(4, 0, 4, 0);
+            lblSourceLang.Name = "lblSourceLang";
+            lblSourceLang.Size = new Size(100, 20);
+            lblSourceLang.TabIndex = 6;
+            lblSourceLang.Text = "🌍 Из языка:";
+            // 
+            // lblTargetLang
+            // 
+            lblTargetLang.AutoSize = true;
+            lblTargetLang.Location = new Point(325, 141);
+            lblTargetLang.Margin = new Padding(4, 0, 4, 0);
+            lblTargetLang.Name = "lblTargetLang";
+            lblTargetLang.Size = new Size(93, 20);
+            lblTargetLang.TabIndex = 8;
+            lblTargetLang.Text = "🎯 На язык:";
+            // 
+            // numThreshold
+            // 
+            numThreshold.DecimalPlaces = 3;
+            numThreshold.Increment = new decimal(new int[] { 5, 0, 0, 196608 });
+            numThreshold.Location = new Point(750, 138);
+            numThreshold.Margin = new Padding(4, 4, 4, 4);
+            numThreshold.Maximum = new decimal(new int[] { 1, 0, 0, 0 });
+            numThreshold.Minimum = new decimal(new int[] { 1, 0, 0, 196608 });
+            numThreshold.Name = "numThreshold";
+            numThreshold.Size = new Size(100, 27);
+            numThreshold.TabIndex = 9;
+            numThreshold.Value = new decimal(new int[] { 50, 0, 0, 196608 });
+            // 
+            // lblThreshold
+            // 
+            lblThreshold.AutoSize = true;
+            lblThreshold.Location = new Point(612, 141);
+            lblThreshold.Margin = new Padding(4, 0, 4, 0);
+            lblThreshold.Name = "lblThreshold";
+            lblThreshold.Size = new Size(122, 20);
+            lblThreshold.TabIndex = 10;
+            lblThreshold.Text = "🎚️ Порог звука:";
+            // 
+            // btnTestTTS
+            // 
+            btnTestTTS.Location = new Point(225, 184);
+            btnTestTTS.Margin = new Padding(4, 4, 4, 4);
+            btnTestTTS.Name = "btnTestTTS";
+            btnTestTTS.Size = new Size(125, 31);
+            btnTestTTS.TabIndex = 14;
+            btnTestTTS.Text = "🔊 Тест TTS";
+            btnTestTTS.UseVisualStyleBackColor = true;
+            btnTestTTS.Click += btnTestTTS_Click;
+            // 
+            // chkAutoTranslate
+            // 
+            chkAutoTranslate.AutoSize = true;
+            chkAutoTranslate.Checked = true;
+            chkAutoTranslate.CheckState = CheckState.Checked;
+            chkAutoTranslate.Location = new Point(375, 188);
+            chkAutoTranslate.Margin = new Padding(4, 4, 4, 4);
+            chkAutoTranslate.Name = "chkAutoTranslate";
+            chkAutoTranslate.Size = new Size(190, 24);
+            chkAutoTranslate.TabIndex = 13;
+            chkAutoTranslate.Text = "🔄 Автоперевод + TTS";
+            chkAutoTranslate.UseVisualStyleBackColor = true;
+            // 
+            // lblAudioLevel
+            // 
+            lblAudioLevel.AutoSize = true;
+            lblAudioLevel.Location = new Point(625, 91);
+            lblAudioLevel.Margin = new Padding(4, 0, 4, 0);
+            lblAudioLevel.Name = "lblAudioLevel";
+            lblAudioLevel.Size = new Size(121, 20);
+            lblAudioLevel.TabIndex = 11;
+            lblAudioLevel.Text = "📊 Уровень: 0%";
+            // 
+            // progressAudioLevel
+            // 
+            progressAudioLevel.Location = new Point(750, 88);
+            progressAudioLevel.Margin = new Padding(4, 4, 4, 4);
+            progressAudioLevel.Name = "progressAudioLevel";
+            progressAudioLevel.Size = new Size(225, 29);
+            progressAudioLevel.TabIndex = 12;
+            // 
+            // cbProcessingMode
+            // 
+            cbProcessingMode.DropDownStyle = ComboBoxStyle.DropDownList;
+            cbProcessingMode.Location = new Point(150, 184);
+            cbProcessingMode.Margin = new Padding(4, 4, 4, 4);
+            cbProcessingMode.Name = "cbProcessingMode";
+            cbProcessingMode.Size = new Size(199, 28);
+            cbProcessingMode.TabIndex = 22;
+            // 
+            // lblProcessingMode
+            // 
+            lblProcessingMode.AutoSize = true;
+            lblProcessingMode.Location = new Point(15, 188);
+            lblProcessingMode.Margin = new Padding(4, 0, 4, 0);
+            lblProcessingMode.Name = "lblProcessingMode";
+            lblProcessingMode.Size = new Size(140, 20);
+            lblProcessingMode.TabIndex = 23;
+            lblProcessingMode.Text = "⚙️ Режим работы:";
+            // 
+            // lblStats
+            // 
+            lblStats.AutoSize = true;
+            lblStats.Font = new Font("Segoe UI", 8F);
+            lblStats.ForeColor = Color.Gray;
+            lblStats.Location = new Point(375, 188);
+            lblStats.Margin = new Padding(4, 0, 4, 0);
+            lblStats.Name = "lblStats";
+            lblStats.Size = new Size(202, 19);
+            lblStats.TabIndex = 24;
+            lblStats.Text = "📊 Статистика: готов к работе";
+            // 
+            // chkInfiniteTests
+            // 
+            chkInfiniteTests.AutoSize = true;
+            chkInfiniteTests.Font = new Font("Segoe UI", 9F);
+            chkInfiniteTests.ForeColor = Color.DarkBlue;
+            chkInfiniteTests.Location = new Point(420, 50);
+            chkInfiniteTests.Margin = new Padding(4, 3, 4, 3);
+            chkInfiniteTests.Name = "chkInfiniteTests";
+            chkInfiniteTests.Size = new Size(210, 24);
+            chkInfiniteTests.TabIndex = 25;
+            chkInfiniteTests.Text = "🔄 Бесконечные тесты";
+            chkInfiniteTests.UseVisualStyleBackColor = true;
+            chkInfiniteTests.Checked = false;
+            // 
+            // btnTestingGuide
+            // 
+            btnTestingGuide.BackColor = Color.LightSteelBlue;
+            btnTestingGuide.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            btnTestingGuide.Location = new Point(642, 44);
+            btnTestingGuide.Margin = new Padding(4, 3, 4, 3);
+            btnTestingGuide.Name = "btnTestingGuide";
+            btnTestingGuide.Size = new Size(120, 35);
+            btnTestingGuide.TabIndex = 26;
+            btnTestingGuide.Text = "📋 Справочник";
+            btnTestingGuide.UseVisualStyleBackColor = false;
+            btnTestingGuide.Click += btnTestingGuide_Click;
             // 
             // Form1
             // 
-            this.AutoScaleDimensions = new SizeF(96F, 96F);
-            this.AutoScaleMode = AutoScaleMode.Dpi;
-            this.ClientSize = new Size(800, 570);
-            this.MinimumSize = new Size(800, 570);
-            this.Controls.Add(this.txtLogs);
-            this.Controls.Add(this.lblLogs);
-            this.Controls.Add(this.progressBar);
-            this.Controls.Add(this.txtTranslatedText);
-            this.Controls.Add(this.lblTranslated);
-            this.Controls.Add(this.txtRecognizedText);
-            this.Controls.Add(this.lblRecognized);
-            this.Controls.Add(this.btnTestTTS);
-            this.Controls.Add(this.lblStats);
-            this.Controls.Add(this.lblProcessingMode);
-            this.Controls.Add(this.cbProcessingMode);
-            this.Controls.Add(this.chkAutoTranslate);
-            this.Controls.Add(this.progressAudioLevel);
-            this.Controls.Add(this.lblAudioLevel);
-            this.Controls.Add(this.lblThreshold);
-            this.Controls.Add(this.numThreshold);
-            this.Controls.Add(this.lblTargetLang);
-            this.Controls.Add(this.cbTargetLang);
-            this.Controls.Add(this.lblSourceLang);
-            this.Controls.Add(this.cbSourceLang);
-            this.Controls.Add(this.lblSpeakers);
-            this.Controls.Add(this.cbSpeakerDevices);
-            this.Controls.Add(this.lblStatus);
-            this.Controls.Add(this.btnStopCapture);
-            this.Controls.Add(this.btnStartCapture);
-            this.FormBorderStyle = FormBorderStyle.FixedSingle;
-            this.MaximizeBox = false;
-            this.Name = "Form1";
-            this.StartPosition = FormStartPosition.CenterScreen;
-            this.Text = "🎧 Speaker STT → Translate → TTS Tester";
-            this.FormClosing += this.Form1_FormClosing;
-            ((System.ComponentModel.ISupportInitialize)(this.numThreshold)).EndInit();
-            this.ResumeLayout(false);
-            this.PerformLayout();
+            AutoScaleDimensions = new SizeF(120F, 120F);
+            AutoScaleMode = AutoScaleMode.Dpi;
+            ClientSize = new Size(1000, 712);
+            Controls.Add(txtLogs);
+            Controls.Add(lblLogs);
+            Controls.Add(progressBar);
+            Controls.Add(txtTranslatedText);
+            Controls.Add(lblTranslated);
+            Controls.Add(txtRecognizedText);
+            Controls.Add(lblRecognized);
+            Controls.Add(btnTestTTS);
+            Controls.Add(chkInfiniteTests);
+            Controls.Add(btnTestingGuide);
+            Controls.Add(lblStats);
+            Controls.Add(lblProcessingMode);
+            Controls.Add(cbProcessingMode);
+            Controls.Add(chkAutoTranslate);
+            Controls.Add(progressAudioLevel);
+            Controls.Add(lblAudioLevel);
+            Controls.Add(lblThreshold);
+            Controls.Add(numThreshold);
+            Controls.Add(lblTargetLang);
+            Controls.Add(cbTargetLang);
+            Controls.Add(lblSourceLang);
+            Controls.Add(cbSourceLang);
+            Controls.Add(lblSpeakers);
+            Controls.Add(cbSpeakerDevices);
+            Controls.Add(lblStatus);
+            Controls.Add(btnStopCapture);
+            Controls.Add(btnStartCapture);
+            FormBorderStyle = FormBorderStyle.FixedSingle;
+            Margin = new Padding(4, 4, 4, 4);
+            MaximizeBox = false;
+            MinimumSize = new Size(996, 701);
+            Name = "Form1";
+            StartPosition = FormStartPosition.CenterScreen;
+            Text = "🎧 Speaker STT → Translate → TTS Tester";
+            FormClosing += Form1_FormClosing;
+            ((System.ComponentModel.ISupportInitialize)numThreshold).EndInit();
+            ResumeLayout(false);
+            PerformLayout();
         }
 
         #endregion
@@ -377,5 +434,7 @@
         private ComboBox cbProcessingMode;
         private Label lblProcessingMode;
         private Label lblStats;
+        private CheckBox chkInfiniteTests;
+        private Button btnTestingGuide;
     }
 }

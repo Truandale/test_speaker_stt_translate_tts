@@ -12,6 +12,15 @@ namespace test_speaker_stt_translate_tts
     /// </summary>
     public class StableAudioCapture : IDisposable
     {
+        #region Константы диагностики
+        
+        // 🔧 Настройки диагностики - можно менять для тестирования
+        private const bool ENABLE_DIAGNOSTIC_STUBS = false;     // Включить тестовые заглушки
+        private const bool ENABLE_STATS_LOGGING = true;         // Показывать статистику обработки
+        private const double STATS_INTERVAL_SECONDS = 5.0;      // Интервал вывода статистики
+        
+        #endregion
+        
         #region MMCSS и Power Management для приоритета потоков
         
         [DllImport("avrt.dll", CharSet = CharSet.Unicode)]
@@ -437,6 +446,17 @@ namespace test_speaker_stt_translate_tts
                     // Обработка stereo → mono если нужно
                     var processedAudio = ProcessAudioChannels(floatBuffer.AsSpan(0, frameCount));
                     
+                    // 🔇 АУДИО-ГЕЙТИНГ: Проверка RMS уровня для фильтрации тишины
+                    var rms = CalculateRMS(processedAudio);
+                    const float SILENCE_THRESHOLD = 0.001f; // Минимальный порог громкости
+                    
+                    if (rms < SILENCE_THRESHOLD)
+                    {
+                        // Тишина - не отправляем в STT, возвращаем буфер
+                        _floatPool.Return(processedAudio);
+                        return;
+                    }
+                    
                     // Отправка в STT канал
                     if (!_normalizedAudioChannel.Writer.TryWrite(processedAudio))
                     {
@@ -502,6 +522,10 @@ namespace test_speaker_stt_translate_tts
         {
             Thread.CurrentThread.Priority = ThreadPriority.AboveNormal;
             
+            // 🔧 Счетчики для диагностики (не спамят логи)
+            var processedSegments = 0;
+            var lastStatsTime = DateTime.Now;
+            
             try
             {
                 await foreach (var audioSegment in _normalizedAudioChannel.Reader.ReadAllAsync(ct))
@@ -511,9 +535,24 @@ namespace test_speaker_stt_translate_tts
                         // TODO: Здесь будет интеграция с Whisper
                         // var recognizedText = await WhisperRecognizeAsync(audioSegment, ct);
                         
-                        // Временная заглушка
                         await Task.Delay(10, ct);
-                        var recognizedText = $"[STT] Segment {audioSegment.Length} frames";
+                        processedSegments++;
+                        
+                        // � УМНАЯ ДИАГНОСТИКА: Показываем статистику раз в 5 секунд
+                        var now = DateTime.Now;
+                        if ((now - lastStatsTime).TotalSeconds >= 5.0)
+                        {
+                            OnStatusChanged?.Invoke($"📊 STT: Обработано {processedSegments} сегментов за {(now - lastStatsTime).TotalSeconds:F1}с");
+                            processedSegments = 0;
+                            lastStatsTime = now;
+                        }
+                        
+                        // 🧪 ТЕСТОВАЯ ЗАГЛУШКА: Можно включить для тестов конкретных функций
+                        string? recognizedText = null;
+                        
+                        // Раскомментируйте для тестирования пайплайна:
+                        // if (audioSegment.Length > 4000) // Только для "длинных" сегментов
+                        //     recognizedText = $"[TEST] Audio {audioSegment.Length} samples, RMS: {CalculateRMS(audioSegment):F4}";
                         
                         if (!string.IsNullOrWhiteSpace(recognizedText))
                         {
@@ -567,6 +606,26 @@ namespace test_speaker_stt_translate_tts
             {
                 // Нормальная отмена
             }
+        }
+        
+        /// <summary>
+        /// Вычисляет RMS (Root Mean Square) уровень громкости аудио сигнала
+        /// </summary>
+        /// <param name="audioData">Аудио данные в формате float</param>
+        /// <returns>RMS значение (0.0 - тишина, 1.0 - максимум)</returns>
+        private static float CalculateRMS(ReadOnlySpan<float> audioData)
+        {
+            if (audioData.Length == 0)
+                return 0.0f;
+                
+            double sum = 0.0;
+            for (int i = 0; i < audioData.Length; i++)
+            {
+                var sample = audioData[i];
+                sum += sample * sample;
+            }
+            
+            return (float)Math.Sqrt(sum / audioData.Length);
         }
         
         #endregion
