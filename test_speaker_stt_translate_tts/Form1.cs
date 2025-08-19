@@ -126,6 +126,7 @@ namespace test_speaker_stt_translate_tts
         private System.Timers.Timer? _restartDebounce; // коалесцируем всплеск событий
         private volatile string? _currentRenderId;     // текущий дефолтный render-устройствo
         private volatile bool _isClosing = false;      // закрытие формы
+        private int _restartAttempts = 0;     // счетчик попыток рестарта для мониторинга
         
         // CancellationToken для остановки пайплайна
         private CancellationTokenSource? _pipelineCts;
@@ -508,7 +509,7 @@ namespace test_speaker_stt_translate_tts
             try
             {
                 // Проверяем количество доступных устройств
-                var deviceEnum = new MMDeviceEnumerator();
+                using var deviceEnum = new MMDeviceEnumerator();
                 var renderDevices = deviceEnum.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
                 var captureDevices = deviceEnum.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
                 
@@ -584,7 +585,7 @@ namespace test_speaker_stt_translate_tts
         {
             try
             {
-                var deviceEnum = new MMDeviceEnumerator();
+                using var deviceEnum = new MMDeviceEnumerator();
                 var defaultDevice = deviceEnum.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 
                 if (defaultDevice == null) return false;
@@ -708,7 +709,7 @@ namespace test_speaker_stt_translate_tts
             // Audio устройства статус
             try
             {
-                var deviceEnum = new MMDeviceEnumerator();
+                using var deviceEnum = new MMDeviceEnumerator();
                 var defaultDevice = deviceEnum.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
                 Debug.WriteLine($"🔊 Аудио устройства:");
                 Debug.WriteLine($"   🔸 Устройство по умолчанию: {defaultDevice?.FriendlyName ?? "НЕТ"}");
@@ -989,7 +990,7 @@ namespace test_speaker_stt_translate_tts
             
             try
             {
-                var deviceEnum = new MMDeviceEnumerator();
+                using var deviceEnum = new MMDeviceEnumerator();
                 var renderDevices = deviceEnum.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
                 var captureDevices = deviceEnum.EnumerateAudioEndPoints(DataFlow.Capture, DeviceState.Active);
                 
@@ -1450,7 +1451,7 @@ namespace test_speaker_stt_translate_tts
             
             cbSpeakerDevices.Items.Clear();
             
-            var enumerator = new MMDeviceEnumerator();
+            using var enumerator = new MMDeviceEnumerator();
             var devices = enumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
             
             foreach (var device in devices)
@@ -5504,7 +5505,7 @@ namespace test_speaker_stt_translate_tts
 
                 // подготовить дебаунсер
                 _restartDebounce = new System.Timers.Timer(500) { AutoReset = false };
-                _restartDebounce.Elapsed += async (_, __) => await RestartCaptureSafeAsync().ConfigureAwait(false);
+                _restartDebounce.Elapsed += (_, __) => _ = RestartDebouncedAsync();
 
                 LogMessage("🔔 Мониторинг аудиоустройств инициализирован");
             }
@@ -5531,7 +5532,7 @@ namespace test_speaker_stt_translate_tts
             if (!string.IsNullOrEmpty(_currentRenderId) && string.Equals(_currentRenderId, newRenderId, StringComparison.Ordinal))
                 return;
 
-            LogMessage("� Обнаружено изменение default render устройства - запуск безопасного рестарта...");
+            LogMessage("🔄 Обнаружено изменение default render устройства - запуск безопасного рестарта...");
 
             // запрос на рестарт: коалесцируем события через debounce
             Interlocked.Exchange(ref _pendingRestart, 1);
@@ -5543,6 +5544,25 @@ namespace test_speaker_stt_translate_tts
         /// Публичная «безопасная» обёртка для рестарта capture
         /// </summary>
         private Task RestartCaptureSafeAsync() => RestartCaptureWorkerAsync();
+
+        /// <summary>
+        /// Безопасный обработчик дебаунс-таймера для предотвращения async void
+        /// </summary>
+        private async Task RestartDebouncedAsync()
+        {
+            try 
+            { 
+                await RestartCaptureSafeAsync().ConfigureAwait(false); 
+            }
+            catch (OperationCanceledException) 
+            { 
+                /* нормальная остановка при закрытии */ 
+            }
+            catch (Exception ex) 
+            { 
+                LogMessage($"❌ Ошибка в дебаунс-рестарте: {ex.Message}"); 
+            }
+        }
 
         /// <summary>
         /// Безопасный рестарт audio capture с защитой от гонок
@@ -5567,9 +5587,10 @@ namespace test_speaker_stt_translate_tts
                 do
                 {
                     Interlocked.Exchange(ref _pendingRestart, 0);
+                    _restartAttempts++;
 
                     if (_isClosing) break;
-                    LogMessage("🔄 Перезапуск loopback-захвата (смена устройства)...");
+                    LogMessage($"🔄 Перезапуск loopback-захвата (смена устройства) - попытка #{_restartAttempts}...");
 
                     try
                     {
@@ -5582,10 +5603,7 @@ namespace test_speaker_stt_translate_tts
                             });
                         }
 
-                        // 2) обновить текущий render id
-                        _currentRenderId = GetDefaultRenderIdSafe();
-
-                        // 3) обновить список устройств и переподключиться
+                        // 2) обновить список устройств и переподключиться
                         this.Invoke(() => {
                             try 
                             { 
@@ -5598,7 +5616,16 @@ namespace test_speaker_stt_translate_tts
                                     
                                     // Небольшая пауза и возобновление capture
                                     Task.Delay(500).ContinueWith(_ => this.Invoke(() => {
-                                        try { StartAudioCapture(); } catch (Exception ex) { LogMessage($"❌ Ошибка возобновления capture: {ex.Message}"); }
+                                        try 
+                                        { 
+                                            StartAudioCapture(); 
+                                            // Обновить _currentRenderId только после успешного старта
+                                            _currentRenderId = GetDefaultRenderIdSafe();
+                                        } 
+                                        catch (Exception ex) 
+                                        { 
+                                            LogMessage($"❌ Ошибка возобновления capture: {ex.Message}"); 
+                                        }
                                     }));
                                 }
                             } 
@@ -5609,12 +5636,13 @@ namespace test_speaker_stt_translate_tts
                             }
                         });
 
-                        LogMessage("✅ Захват перезапущен");
+                        LogMessage($"✅ Захват перезапущен успешно (попытка #{_restartAttempts})");
                         backoffMs = 250; // reset backoff on success
                     }
                     catch (Exception ex)
                     {
-                        LogMessage($"❌ Ошибка рестарта loopback: {ex.Message}");
+                        LogMessage($"❌ Ошибка рестарта loopback (попытка #{_restartAttempts}): {ex.Message}");
+                        LogMessage($"🔄 Backoff: {backoffMs}ms, следующая попытка через {Math.Min(backoffMs * 2, 5000)}ms");
                         // бэкофф и повторная попытка, если во время рестарта пришёл новый запрос
                         await Task.Delay(backoffMs).ConfigureAwait(false);
                         backoffMs = Math.Min(backoffMs * 2, 5000);
@@ -5622,6 +5650,13 @@ namespace test_speaker_stt_translate_tts
                     }
                 }
                 while (Volatile.Read(ref _pendingRestart) == 1 && !_isClosing);
+                
+                // Сброс счетчика после успешного завершения всех попыток
+                if (!_isClosing && _restartAttempts > 1)
+                {
+                    LogMessage($"📊 Рестарт завершен после {_restartAttempts} попыток");
+                }
+                _restartAttempts = 0;
             }
             finally
             {
@@ -6505,3 +6540,5 @@ TTS (СИНТЕЗ РЕЧИ):
         }
     }
 }
+
+
