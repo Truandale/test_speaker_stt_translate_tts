@@ -91,6 +91,10 @@ namespace test_speaker_stt_translate_tts
         private DateTime _lastSaveTime = DateTime.MinValue;
         private const int SAVE_THROTTLE_MS = 500; // Coalesce saves for 500ms
         
+        // Enhanced retry mechanism fields
+        private int _currentRetryCount = 0;
+        private System.Windows.Forms.Timer? _retryTimer;
+        
         // Ссылка на главную форму для запуска тестов
         private Form1 parentForm;
 
@@ -490,113 +494,146 @@ namespace test_speaker_stt_translate_tts
         /// <summary>
         /// Performs atomic JSON write with error handling and throttling
         /// </summary>
-        private void PerformOptimizedSave()
+        private void PerformOptimizedSave(int retryCount = 0)
         {
             _saveTimer.Stop();
             
             if (!_settingsDirty) return;
             
-            var retryCount = 0;
             const int maxRetries = 2;
             
-            while (retryCount <= maxRetries)
+            // Единый tempPath для всего цикла попыток
+            var tempPath = SettingsFilePath + ".tmp";
+            
+            try
             {
+                // Check throttling to prevent excessive disk I/O
+                var timeSinceLastSave = DateTime.Now - _lastSaveTime;
+                if (timeSinceLastSave.TotalMilliseconds < SAVE_THROTTLE_MS / 2)
+                {
+                    // Schedule retry
+                    _saveTimer.Start();
+                    return;
+                }
+                
+                var settings = new Dictionary<string, bool>();
+                foreach (var kvp in checkBoxes)
+                {
+                    settings[kvp.Key] = kvp.Value.Checked;
+                }
+                
+                var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
+                
+                // Ensure target directory exists (safety-net)
+                var targetDir = Path.GetDirectoryName(SettingsFilePath);
+                if (!string.IsNullOrEmpty(targetDir))
+                {
+                    Directory.CreateDirectory(targetDir);
+                }
+                
+                // Atomic write using temporary file with UTF-8 encoding (no BOM)
+                File.WriteAllText(tempPath, json, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+                
+                // Atomic replace (Windows guarantees this is atomic)
                 try
                 {
-                    // Check throttling to prevent excessive disk I/O
-                    var timeSinceLastSave = DateTime.Now - _lastSaveTime;
-                    if (timeSinceLastSave.TotalMilliseconds < SAVE_THROTTLE_MS / 2)
-                    {
-                        // Schedule retry
-                        _saveTimer.Start();
-                        return;
-                    }
-                    
-                    var settings = new Dictionary<string, bool>();
-                    foreach (var kvp in checkBoxes)
-                    {
-                        settings[kvp.Key] = kvp.Value.Checked;
-                    }
-                    
-                    var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-                    
-                    // Atomic write using temporary file with UTF-8 encoding (no BOM)
-                    var tempPath = SettingsFilePath + ".tmp";
-                    File.WriteAllText(tempPath, json, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-                    
-                    // Atomic replace (Windows guarantees this is atomic)
-                    try
-                    {
-                        File.Replace(tempPath, SettingsFilePath, null);
-                    }
-                    catch (FileNotFoundException)
-                    {
-                        // First time save - target doesn't exist, use Move
-                        File.Move(tempPath, SettingsFilePath);
-                    }
-                    
-                    _settingsDirty = false;
-                    _lastSaveTime = DateTime.Now;
-                    
-                    System.Diagnostics.Debug.WriteLine($"📁 Optimized diagnostics save completed: {settings.Count} items" + 
-                        (retryCount > 0 ? $" (retry {retryCount})" : ""));
-                    return; // Success - exit retry loop
+                    File.Replace(tempPath, SettingsFilePath, null);
                 }
-                catch (IOException ex) when (retryCount < maxRetries)
+                catch (FileNotFoundException)
                 {
-                    // IOException retry logic for AV/indexing conflicts
-                    retryCount++;
-                    var delay = 100 + (retryCount * 150); // 250ms, 400ms delays
-                    System.Diagnostics.Debug.WriteLine($"🔄 IOException retry {retryCount}/{maxRetries} after {delay}ms: {ex.Message}");
-                    
-                    // Cleanup temp file before retry
-                    var tempPath = SettingsFilePath + ".tmp";
-                    try
-                    {
-                        if (File.Exists(tempPath))
-                        {
-                            File.Delete(tempPath);
-                        }
-                    }
-                    catch { /* Ignore cleanup errors */ }
-                    
-                    Task.Delay(delay).Wait(); // Synchronous wait for retry
-                    continue; // Retry
+                    // First time save - target doesn't exist, use Move
+                    File.Move(tempPath, SettingsFilePath);
                 }
-                catch (Exception ex)
+                
+                _settingsDirty = false;
+                _lastSaveTime = DateTime.Now;
+                
+                System.Diagnostics.Debug.WriteLine($"📁 Optimized diagnostics save completed: {settings.Count} items" + 
+                    (retryCount > 0 ? $" (retry {retryCount})" : ""));
+            }
+            catch (IOException ex) when (retryCount < maxRetries)
+            {
+                // IOException retry logic for AV/indexing conflicts
+                var nextRetryCount = retryCount + 1;
+                var delay = 100 + (nextRetryCount * 150); // 250ms, 400ms delays
+                System.Diagnostics.Debug.WriteLine($"🔄 IOException retry {nextRetryCount}/{maxRetries} after {delay}ms: {ex.Message}");
+                
+                // Cleanup temp file before retry
+                try
                 {
-                    System.Diagnostics.Debug.WriteLine($"❌ Optimized save error: {ex.Message}");
-                    
-                    // Cleanup temporary file on any error
-                    var tempPath = SettingsFilePath + ".tmp";
-                    try
+                    if (File.Exists(tempPath))
                     {
-                        if (File.Exists(tempPath))
-                        {
-                            File.Delete(tempPath);
-                            System.Diagnostics.Debug.WriteLine("🧹 Cleaned up temporary file");
-                        }
+                        File.Delete(tempPath);
                     }
-                    catch { /* Ignore cleanup errors */ }
-                    
-                    // Schedule retry on failure
-                    if (_settingsDirty)
+                }
+                catch { /* Ignore cleanup errors */ }
+                
+                // Неблокирующий ретрай через асинхронную задержку
+                ScheduleRetryAsync(delay, nextRetryCount);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"❌ Optimized save error: {ex.Message}");
+                
+                // Cleanup temporary file on any error
+                try
+                {
+                    if (File.Exists(tempPath))
                     {
-                        Task.Delay(1000).ContinueWith(_ => 
-                        {
-                            if (_settingsDirty && !IsDisposed)
-                            {
-                                try
-                                {
-                                    BeginInvoke(new Action(() => _saveTimer.Start()));
-                                }
-                                catch { /* Form disposed */ }
-                            }
-                        });
+                        File.Delete(tempPath);
+                        System.Diagnostics.Debug.WriteLine("🧹 Cleaned up temporary file");
                     }
-                    return; // Exit retry loop on non-IOException
+                }
+                catch { /* Ignore cleanup errors */ }
+                
+                // Schedule retry on failure with exponential backoff
+                if (_settingsDirty)
+                {
+                    ScheduleRetryAsync(1000); // Standard 1s delay for non-IOException failures
                 }
             }
+        }
+
+        /// <summary>
+        /// Schedules non-blocking retry for IOException scenarios using Forms.Timer
+        /// </summary>
+        private void ScheduleRetryAsync(int delayMs, int retryCount = 0)
+        {
+            if (IsDisposed || !_settingsDirty) return;
+            
+            // Clean up any existing retry timer
+            _retryTimer?.Stop();
+            _retryTimer?.Dispose();
+            
+            // Create new retry timer with specified delay
+            _retryTimer = new System.Windows.Forms.Timer
+            {
+                Interval = delayMs,
+                Enabled = false
+            };
+            
+            _retryTimer.Tick += (s, e) =>
+            {
+                _retryTimer?.Stop();
+                _retryTimer?.Dispose();
+                _retryTimer = null;
+                
+                // Retry the save operation with incremented retry count
+                if (_settingsDirty && !IsDisposed)
+                {
+                    try
+                    {
+                        PerformOptimizedSave(retryCount);
+                    }
+                    catch (Exception ex)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"❌ Retry save failed: {ex.Message}");
+                    }
+                }
+            };
+            
+            _retryTimer.Start();
+            System.Diagnostics.Debug.WriteLine($"⏰ Scheduled non-blocking retry in {delayMs}ms (attempt {retryCount + 1})");
         }
 
         private void LoadSettings()
@@ -647,7 +684,18 @@ namespace test_speaker_stt_translate_tts
             if (_settingsDirty)
             {
                 _saveTimer.Stop();
-                PerformOptimizedSave();
+                _retryTimer?.Stop(); // Stop any pending retries
+                
+                // Synchronous final save to ensure data is not lost
+                try
+                {
+                    PerformOptimizedSave();
+                    System.Diagnostics.Debug.WriteLine("💾 Final save completed on form closing");
+                }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"⚠️ Final save failed on closing: {ex.Message}");
+                }
             }
             
             // Скрываем форму вместо закрытия для быстрого повторного открытия
@@ -658,9 +706,11 @@ namespace test_speaker_stt_translate_tts
             }
             else
             {
-                // Actual close - cleanup timer
+                // Actual close - cleanup all timers
                 _saveTimer?.Stop();
                 _saveTimer?.Dispose();
+                _retryTimer?.Stop();
+                _retryTimer?.Dispose();
             }
         }
 
