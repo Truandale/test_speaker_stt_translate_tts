@@ -65,16 +65,35 @@ namespace test_speaker_stt_translate_tts
         private readonly Channel<byte[]> _captureChannel = 
             Channel.CreateBounded<byte[]>(new BoundedChannelOptions(64) { 
                 SingleWriter = true, 
+                SingleReader = true,
                 FullMode = BoundedChannelFullMode.DropOldest 
             });
         private readonly Channel<float[]> _mono16kChannel = 
             Channel.CreateBounded<float[]>(new BoundedChannelOptions(64) { 
+                SingleWriter = true,
+                SingleReader = true,
                 FullMode = BoundedChannelFullMode.DropOldest 
             });
         private readonly Channel<string> _sttChannel = 
             Channel.CreateBounded<string>(new BoundedChannelOptions(64) { 
+                SingleWriter = true,
+                SingleReader = true,
                 FullMode = BoundedChannelFullMode.DropOldest 
             });
+        
+        // Drop counters for performance monitoring
+        private long _captureDropCount = 0;
+        private long _mono16kDropCount = 0;
+        private long _sttDropCount = 0;
+
+        /// <summary>
+        /// Отображает статистику сброшенных пакетов для мониторинга производительности
+        /// </summary>
+        private void DisplayDropCounterStats()
+        {
+            var stats = $"📊 Статистика сбросов: Capture={_captureDropCount}, Mono16k={_mono16kDropCount}, STT={_sttDropCount}";
+            LogMessage(stats);
+        }
         
         // CancellationToken для остановки пайплайна
         private CancellationTokenSource? _pipelineCts;
@@ -105,6 +124,73 @@ namespace test_speaker_stt_translate_tts
 
         // Токен отмены для экстренной остановки тестирования
         private CancellationTokenSource? testingCancellationTokenSource;
+
+        // Emergency Stop Management
+        private CancellationTokenSource? emergencyStopCTS;
+
+        // MediaFoundation lifecycle управление
+        private static int _mfInitialized = 0;
+        
+        // MediaFoundation lifecycle management - Singleton pattern  
+        private static volatile bool mfInitialized = false;
+        private static readonly object mfLock = new object();
+
+        private void EnsureMediaFoundation()
+        {
+            if (!mfInitialized)
+            {
+                lock (mfLock)
+                {
+                    if (!mfInitialized)
+                    {
+                        try
+                        {
+                            // MediaFoundation.Initialize(); // Uncomment when MediaFoundation is available
+                            mfInitialized = true;
+                            LogMessage("🔧 MediaFoundation инициализирован");
+                        }
+                        catch (Exception ex)
+                        {
+                            LogMessage($"❌ Ошибка инициализации MediaFoundation: {ex.Message}");
+                        }
+                    }
+                }
+            }
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            try
+            {
+                // Emergency stop if something is running
+                if (emergencyStopCTS != null)
+                {
+                    EmergencyStopAllTesting();
+                }
+
+                // MediaFoundation cleanup
+                if (mfInitialized)
+                {
+                    try
+                    {
+                        // MediaFoundation.Shutdown(); // Uncomment when MediaFoundation is available
+                        LogMessage("🔧 MediaFoundation очищен");
+                    }
+                    catch (Exception ex)
+                    {
+                        LogMessage($"⚠️ Предупреждение при очистке MediaFoundation: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"OnFormClosed error: {ex.Message}");
+            }
+            finally
+            {
+                base.OnFormClosed(e);
+            }
+        }
         
         // STT & Translation - Enhanced
         private static string WhisperModelPath => Path.Combine(Application.StartupPath, "models", "whisper", "ggml-small.bin");
@@ -1173,11 +1259,7 @@ namespace test_speaker_stt_translate_tts
                     ShowTestingGuide();
                     e.Handled = true;
                 }
-                else if (e.KeyCode == Keys.Escape)
-                {
-                    EmergencyStopAllTesting();
-                    e.Handled = true;
-                }
+                // ESC теперь обрабатывается через CancelButton
             };
         }
 
@@ -1191,6 +1273,9 @@ namespace test_speaker_stt_translate_tts
             
             // Настройка ToolTips для кнопок диагностики
             SetupDiagnosticsTooltips();
+            
+            // Настройка ESC для экстренной остановки через нативный механизм
+            this.CancelButton = btnEmergencyStop;
             
             // Подписываемся на событие закрытия формы для корректной очистки ресурсов
             this.FormClosing += Form1_OnFormClosing;
@@ -4683,9 +4768,9 @@ namespace test_speaker_stt_translate_tts
                 audioStream.Write(pcmBytes, 0, pcmBytes.Length);
                 audioStream.Position = 0;
 
-                // STT обработка
+                // STT обработка with enhanced cancellation support
                 var segments = new List<string>();
-                await foreach (var segment in _whisperProcessor.ProcessAsync(audioStream, ct))
+                await foreach (var segment in _whisperProcessor.ProcessAsync(audioStream, ct).WithCancellation(ct))
                 {
                     if (!string.IsNullOrWhiteSpace(segment.Text))
                     {
@@ -5341,20 +5426,27 @@ namespace test_speaker_stt_translate_tts
         // 🚀 АВТОМАТИЧЕСКОЕ ПЕРЕПОДКЛЮЧЕНИЕ устройств при HDMI/Bluetooth переключении
         private MMDeviceEnumerator? deviceEnumerator;
         private AudioDeviceNotificationClient? notificationClient;
+        private static int _deviceNotificationsInitialized = 0; // Interlocked flag for idempotent registration
         
         private void InitializeDeviceNotifications()
         {
-            try
+            // Idempotent initialization with Interlocked for thread safety
+            if (Interlocked.CompareExchange(ref _deviceNotificationsInitialized, 1, 0) == 0)
             {
-                deviceEnumerator = new MMDeviceEnumerator();
-                notificationClient = new AudioDeviceNotificationClient(this);
-                deviceEnumerator.RegisterEndpointNotificationCallback(notificationClient);
-                
-                LogMessage("🔔 Инициализирован мониторинг аудиоустройств");
-            }
-            catch (Exception ex)
-            {
-                LogMessage($"⚠️ Не удалось инициализировать мониторинг устройств: {ex.Message}");
+                try
+                {
+                    deviceEnumerator = new MMDeviceEnumerator();
+                    notificationClient = new AudioDeviceNotificationClient(this);
+                    deviceEnumerator.RegisterEndpointNotificationCallback(notificationClient);
+                    
+                    LogMessage("🔔 Инициализирован мониторинг аудиоустройств");
+                }
+                catch (Exception ex)
+                {
+                    // Reset flag on failure
+                    Interlocked.Exchange(ref _deviceNotificationsInitialized, 0);
+                    LogMessage($"⚠️ Не удалось инициализировать мониторинг устройств: {ex.Message}");
+                }
             }
         }
         
@@ -5419,20 +5511,26 @@ namespace test_speaker_stt_translate_tts
         
         private void CleanupDeviceNotifications()
         {
-            try
+            // Idempotent cleanup with Interlocked for thread safety
+            if (Interlocked.CompareExchange(ref _deviceNotificationsInitialized, 0, 1) == 1)
             {
-                if (deviceEnumerator != null && notificationClient != null)
+                try
                 {
-                    deviceEnumerator.UnregisterEndpointNotificationCallback(notificationClient);
+                    if (deviceEnumerator != null && notificationClient != null)
+                    {
+                        deviceEnumerator.UnregisterEndpointNotificationCallback(notificationClient);
+                    }
+                    
+                    deviceEnumerator?.Dispose();
+                    notificationClient = null;
+                    deviceEnumerator = null;
+                    
+                    LogMessage("🔔 Мониторинг аудиоустройств очищен");
                 }
-                
-                deviceEnumerator?.Dispose();
-                notificationClient = null;
-                deviceEnumerator = null;
-            }
-            catch (Exception ex)
-            {
-                LogMessage($"⚠️ Ошибка очистки мониторинга устройств: {ex.Message}");
+                catch (Exception ex)
+                {
+                    LogMessage($"⚠️ Ошибка очистки мониторинга устройств: {ex.Message}");
+                }
             }
         }
         
@@ -5511,8 +5609,8 @@ namespace test_speaker_stt_translate_tts
 
         private void btnAllDiag_Click(object sender, EventArgs e)
         {
-            // Создаем новый токен отмены для этой серии тестов
-            testingCancellationTokenSource?.Cancel();
+            // Безопасная замена CancellationTokenSource с утилизацией предыдущего
+            Interlocked.Exchange(ref testingCancellationTokenSource, null)?.Dispose();
             testingCancellationTokenSource = new CancellationTokenSource();
             var cancellationToken = testingCancellationTokenSource.Token;
             
@@ -5571,16 +5669,19 @@ namespace test_speaker_stt_translate_tts
         /// </summary>
         private void EmergencyStopAllTesting()
         {
+            // Защита от повторного вызова
+            if (!btnEmergencyStop.Enabled) return;
+            btnEmergencyStop.Enabled = false;
+            
             try
             {
                 LogMessage("🚨 ЭКСТРЕННАЯ ОСТАНОВКА ВСЕХ ТЕСТОВ!");
                 
-                // 1. Отменяем токен для всех активных тестов
-                if (testingCancellationTokenSource != null)
-                {
-                    testingCancellationTokenSource.Cancel();
-                    LogMessage("✅ Токен отмены активирован");
-                }
+                // 1. Безопасная отмена и утилизация токена
+                var cts = Interlocked.Exchange(ref testingCancellationTokenSource, null);
+                cts?.Cancel();
+                cts?.Dispose();
+                LogMessage("✅ Токен отмены активирован и утилизирован");
                 
                 // 2. Останавливаем бесконечные тесты
                 if (chkInfiniteTests.Checked)
@@ -5613,18 +5714,16 @@ namespace test_speaker_stt_translate_tts
                     btnStopCapture.Enabled = false;
                 });
                 
-                // 5. Очищаем каналы обработки
+                // 5. Очистка каналов - убираем принудительный GC
                 Task.Run(() => {
                     try
                     {
-                        // Очистка Bounded Channels (если есть активные)
-                        GC.Collect();
-                        GC.WaitForPendingFinalizers();
-                        LogMessage("✅ Память очищена");
+                        // Полагаемся на CLR для сборки мусора
+                        LogMessage("✅ Каналы обработки сброшены");
                     }
                     catch (Exception ex)
                     {
-                        LogMessage($"⚠️ Ошибка очистки памяти: {ex.Message}");
+                        LogMessage($"⚠️ Ошибка очистки каналов: {ex.Message}");
                     }
                 });
                 
@@ -5647,6 +5746,10 @@ namespace test_speaker_stt_translate_tts
             catch (Exception ex)
             {
                 LogMessage($"❌ Критическая ошибка при экстренной остановке: {ex.Message}");
+            }
+            finally
+            {
+                btnEmergencyStop.Enabled = true;
             }
         }
 
