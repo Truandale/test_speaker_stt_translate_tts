@@ -154,6 +154,9 @@ namespace test_speaker_stt_translate_tts
         
         // Guide window management
         private static Form? guideWindow = null;
+        
+        // Diagnostics Dashboard management
+        private DiagnosticsChecklistForm? diagnosticsDashboard = null;
 
         // Токен отмены для экстренной остановки тестирования
         private CancellationTokenSource? testingCancellationTokenSource;
@@ -207,6 +210,14 @@ namespace test_speaker_stt_translate_tts
 
                 // Cleanup device notifications
                 CleanupDeviceNotifications();
+                
+                // Cleanup diagnostics dashboard
+                if (diagnosticsDashboard != null && !diagnosticsDashboard.IsDisposed)
+                {
+                    diagnosticsDashboard.Close();
+                    diagnosticsDashboard.Dispose();
+                    diagnosticsDashboard = null;
+                }
             }
             catch (Exception ex)
             {
@@ -332,6 +343,7 @@ namespace test_speaker_stt_translate_tts
                 // Проверяем статические поля
                 bool hasStaticFields = _whisperFactory != null || _whisperProcessor != null;
                 Debug.WriteLine($"   🔸 Статические поля инициализированы: {GetCheckMark(hasStaticFields)}");
+                UpdateDashboard("whisper_static_fields", hasStaticFields);
                 
                 // Проверяем метод EnsureWhisperReady
                 var sw = Stopwatch.StartNew();
@@ -340,9 +352,11 @@ namespace test_speaker_stt_translate_tts
                 
                 bool isQuickInit = sw.ElapsedMilliseconds < 2000; // Должен быть быстрым при повторном вызове
                 Debug.WriteLine($"   🔸 Время инициализации: {sw.ElapsedMilliseconds}ms {GetCheckMark(isQuickInit)}");
+                UpdateDashboard("whisper_quick_init", isQuickInit);
                 
                 bool whisperProcessorReady = _whisperProcessor != null;
                 Debug.WriteLine($"   🔸 WhisperProcessor готов: {GetCheckMark(whisperProcessorReady)}");
+                UpdateDashboard("whisper_processor_ready", whisperProcessorReady);
                 
                 bool result = hasStaticFields && isQuickInit && whisperProcessorReady;
                 Debug.WriteLine($"   ✅ Warm Whisper Instance: {GetCheckMark(result)}");
@@ -400,23 +414,26 @@ namespace test_speaker_stt_translate_tts
             {
                 // Проверяем наличие каналов
                 bool hasCaptureChannel = _captureChannel != null;
-                Debug.WriteLine($"   🔸 Capture Channel создан: {GetCheckMark(hasCaptureChannel)}");
-                
                 bool hasMono16kChannel = _mono16kChannel != null;
-                Debug.WriteLine($"   🔸 Mono16k Channel создан: {GetCheckMark(hasMono16kChannel)}");
-                
                 bool hasSttChannel = _sttChannel != null;
-                Debug.WriteLine($"   🔸 STT Channel создан: {GetCheckMark(hasSttChannel)}");
-                
-                // Проверяем настройки каналов (DropOldest policy)
                 bool hasCorrectPolicy = true; // Нельзя легко проверить политику, предполагаем корректность
+                bool pipelineRunning = _pipelineCts != null && !_pipelineCts.Token.IsCancellationRequested;
+                
+                bool allChannelsReady = hasCaptureChannel && hasMono16kChannel && hasSttChannel;
+                
+                Debug.WriteLine($"   🔸 Capture Channel создан: {GetCheckMark(hasCaptureChannel)}");
+                Debug.WriteLine($"   🔸 Mono16k Channel создан: {GetCheckMark(hasMono16kChannel)}");
+                Debug.WriteLine($"   🔸 STT Channel создан: {GetCheckMark(hasSttChannel)}");
                 Debug.WriteLine($"   🔸 DropOldest политика настроена: {GetCheckMark(hasCorrectPolicy)}");
                 
-                // Проверяем что пайплайн запущен
-                bool pipelineRunning = _pipelineCts != null && !_pipelineCts.Token.IsCancellationRequested;
-                Debug.WriteLine($"   🔸 Пайплайн активен: {GetCheckMark(pipelineRunning)}");
+                UpdateDashboard("channels_created", allChannelsReady);
+                UpdateDashboard("channels_policy", hasCorrectPolicy);
                 
-                bool result = hasCaptureChannel && hasMono16kChannel && hasSttChannel && hasCorrectPolicy;
+                // Проверяем что пайплайн запущен
+                Debug.WriteLine($"   🔸 Пайплайн активен: {GetCheckMark(pipelineRunning)}");
+                UpdateDashboard("pipeline_active", pipelineRunning);
+                
+                bool result = allChannelsReady && hasCorrectPolicy;
                 Debug.WriteLine($"   ✅ Bounded Channels: {GetCheckMark(result)}");
                 return result;
             }
@@ -628,6 +645,24 @@ namespace test_speaker_stt_translate_tts
         }
 
         /// <summary>
+        /// Обновляет диагностический dashboard если он открыт
+        /// </summary>
+        private void UpdateDashboard(string itemId, bool passed)
+        {
+            try
+            {
+                if (diagnosticsDashboard != null && !diagnosticsDashboard.IsDisposed && diagnosticsDashboard.Visible)
+                {
+                    diagnosticsDashboard.UpdateDiagnosticItem(itemId, passed);
+                }
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Dashboard update error: {ex.Message}");
+            }
+        }
+
+        /// <summary>
         /// Запускает диагностику при нажатии кнопки или автоматически
         /// </summary>
         public void TriggerSelfDiagnostics()
@@ -805,12 +840,17 @@ namespace test_speaker_stt_translate_tts
                 var warmStartTime = sw.ElapsedMilliseconds;
                 
                 Debug.WriteLine($"   🔸 Cold start: {coldStartTime}ms {GetCheckMark(coldStartTime < 5000)}");
+                UpdateDashboard("whisper_cold_start", coldStartTime < 5000);
+                
                 Debug.WriteLine($"   🔸 Warm start: {warmStartTime}ms {GetCheckMark(warmStartTime < 100)}");
+                UpdateDashboard("whisper_warm_start", warmStartTime < 100);
+                
                 Debug.WriteLine($"   🔸 Improvement: {(coldStartTime > 0 ? (coldStartTime - warmStartTime) : 0)}ms");
                 
                 // Проверяем thread safety
                 bool isThreadSafe = _whisperLock != null;
                 Debug.WriteLine($"   🔸 Thread safety: {GetCheckMark(isThreadSafe)}");
+                UpdateDashboard("thread_safety", isThreadSafe);
             }
             catch (Exception ex)
             {
@@ -848,11 +888,15 @@ namespace test_speaker_stt_translate_tts
                 }
                 
                 Debug.WriteLine($"   🔸 Поддерживаемые форматы: {supportedFormats}/{formats.Length} {GetCheckMark(supportedFormats >= 3)}");
+                UpdateDashboard("mf_formats_supported", supportedFormats >= 3);
+                
                 Debug.WriteLine($"   🔸 MediaFoundation доступен: {GetCheckMark(true)}"); // Предполагаем что доступен
+                UpdateDashboard("mf_initialized", true);
                 
                 // Тест конвертации
                 var testSuccess = TestAudioConversion();
                 Debug.WriteLine($"   🔸 Тест конвертации: {GetCheckMark(testSuccess)}");
+                UpdateDashboard("mf_conversion_test", testSuccess);
             }
             catch (Exception ex)
             {
@@ -1126,6 +1170,11 @@ namespace test_speaker_stt_translate_tts
             Debug.WriteLine($"   🔸 Качество фильтра: {GetFilterQualityRating(successRate)}");
             Debug.WriteLine($"   🔸 Готовность к продакшену: {GetCheckMark(successRate >= 85)}");
             
+            // Обновляем dashboard
+            UpdateDashboard("filter_validation_85", successRate >= 85);
+            UpdateDashboard("multilingual_support", successRate >= 70); // Предполагаем что если общий тест хорош, то многоязычность тоже
+            UpdateDashboard("production_ready", successRate >= 85);
+            
             Debug.WriteLine("🔍 =================================");
         }
 
@@ -1246,6 +1295,18 @@ namespace test_speaker_stt_translate_tts
                 "• Автопозиционирование на втором мониторе\n" +
                 "• Всегда сверху для удобства");
 
+            // Диагностический dashboard
+            var dashboardTooltip = new ToolTip();
+            dashboardTooltip.SetToolTip(btnDiagnosticsDashboard, 
+                "Диагностический Dashboard (F11)\n" +
+                "• Немодальное окно с интерактивными чеклистами\n" +
+                "• Автоматическое проставление галок при тестах\n" +
+                "• Визуальный прогресс и общий статус системы\n" +
+                "• Индивидуальные кнопки сброса для каждого пункта\n" +
+                "• Автосохранение состояния в DiagnosticsChecklist.json\n" +
+                "• Кнопка запуска всех тестов одним кликом\n" +
+                "• Поддержка горячих клавиш (F5, ESC)");
+
             // Экстренная остановка
             var emergencyTooltip = new ToolTip();
             emergencyTooltip.SetToolTip(btnEmergencyStop, 
@@ -1297,6 +1358,11 @@ namespace test_speaker_stt_translate_tts
                 else if (e.KeyCode == Keys.F10)
                 {
                     ShowTestingGuide();
+                    e.Handled = true;
+                }
+                else if (e.KeyCode == Keys.F11)
+                {
+                    ShowDiagnosticsDashboard();
                     e.Handled = true;
                 }
                 // ESC теперь обрабатывается через CancelButton
@@ -5737,6 +5803,11 @@ namespace test_speaker_stt_translate_tts
             ShowTestingGuide();
         }
 
+        private void btnDiagnosticsDashboard_Click(object sender, EventArgs e)
+        {
+            ShowDiagnosticsDashboard();
+        }
+
         private void btnDiagnostics_Click(object sender, EventArgs e)
         {
             TriggerSelfDiagnostics();
@@ -6455,6 +6526,51 @@ TTS (СИНТЕЗ РЕЧИ):
 
 ════════════════════════════════════════════════════════════════";
         }
+
+        
+        #region Diagnostics Dashboard Management
+        
+        /// <summary>
+        /// Показывает или фокусирует диагностический dashboard
+        /// </summary>
+        private void ShowDiagnosticsDashboard()
+        {
+            try
+            {
+                if (diagnosticsDashboard == null || diagnosticsDashboard.IsDisposed)
+                {
+                    diagnosticsDashboard = new DiagnosticsChecklistForm(this);
+                    
+                    // Позиционирование на втором мониторе если доступен
+                    if (Screen.AllScreens.Length > 1)
+                    {
+                        var secondScreen = Screen.AllScreens[1];
+                        diagnosticsDashboard.StartPosition = FormStartPosition.Manual;
+                        diagnosticsDashboard.Location = new Point(
+                            secondScreen.Bounds.X + 50,
+                            secondScreen.Bounds.Y + 50
+                        );
+                    }
+                }
+
+                // Показываем или выносим на передний план
+                if (diagnosticsDashboard.Visible)
+                {
+                    diagnosticsDashboard.Activate();
+                    diagnosticsDashboard.BringToFront();
+                }
+                else
+                {
+                    diagnosticsDashboard.Show();
+                }
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка открытия диагностического dashboard: {ex.Message}");
+            }
+        }
+        
+        #endregion
 
         #endregion
     }

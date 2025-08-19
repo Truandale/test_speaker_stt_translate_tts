@@ -55,6 +55,7 @@
             lblStats = new Label();
             chkInfiniteTests = new CheckBox();
             btnTestingGuide = new Button();
+            btnDiagnosticsDashboard = new Button();
             btnDiagnostics = new Button();
             btnPerfDiag = new Button();
             btnAdvancedDiag = new Button();
@@ -69,7 +70,7 @@
             btnStartCapture.BackColor = Color.LightGreen;
             btnStartCapture.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
             btnStartCapture.Location = new Point(15, 15);
-            btnStartCapture.Margin = new Padding(4, 4, 4, 4);
+            btnStartCapture.Margin = new Padding(4);
             btnStartCapture.Name = "btnStartCapture";
             btnStartCapture.Size = new Size(188, 50);
             btnStartCapture.TabIndex = 0;
@@ -83,7 +84,7 @@
             btnStopCapture.Enabled = false;
             btnStopCapture.Font = new Font("Segoe UI", 12F, FontStyle.Bold);
             btnStopCapture.Location = new Point(225, 15);
-            btnStopCapture.Margin = new Padding(4, 4, 4, 4);
+            btnStopCapture.Margin = new Padding(4);
             btnStopCapture.Name = "btnStopCapture";
             btnStopCapture.Size = new Size(188, 50);
             btnStopCapture.TabIndex = 1;
@@ -108,7 +109,7 @@
             txtRecognizedText.BackColor = Color.LightYellow;
             txtRecognizedText.Font = new Font("Segoe UI", 10F);
             txtRecognizedText.Location = new Point(15, 256);
-            txtRecognizedText.Margin = new Padding(4, 4, 4, 4);
+            txtRecognizedText.Margin = new Padding(4);
             txtRecognizedText.Multiline = true;
             txtRecognizedText.Name = "txtRecognizedText";
             txtRecognizedText.ReadOnly = true;
@@ -122,7 +123,7 @@
             txtTranslatedText.BackColor = Color.LightCyan;
             txtTranslatedText.Font = new Font("Segoe UI", 10F);
             txtTranslatedText.Location = new Point(500, 256);
-            txtTranslatedText.Margin = new Padding(4, 4, 4, 4);
+            txtTranslatedText.Margin = new Padding(4);
             txtTranslatedText.Multiline = true;
             txtTranslatedText.Name = "txtTranslatedText";
             txtTranslatedText.ReadOnly = true;
@@ -156,7 +157,7 @@
             // progressBar
             // 
             progressBar.Location = new Point(15, 375);
-            progressBar.Margin = new Padding(4, 4, 4, 4);
+            progressBar.Margin = new Padding(4);
             progressBar.Name = "progressBar";
             progressBar.Size = new Size(960, 29);
             progressBar.Style = ProgressBarStyle.Marquee;
@@ -167,7 +168,7 @@
             // 
             cbSpeakerDevices.DropDownStyle = ComboBoxStyle.DropDownList;
             cbSpeakerDevices.Location = new Point(150, 88);
-            cbSpeakerDevices.Margin = new Padding(4, 4, 4, 4);
+            cbSpeakerDevices.Margin = new Padding(4);
             cbSpeakerDevices.Name = "cbSpeakerDevices";
             cbSpeakerDevices.Size = new Size(436, 28);
             cbSpeakerDevices.TabIndex = 3;
@@ -188,7 +189,7 @@
             txtLogs.Font = new Font("Consolas", 9F);
             txtLogs.ForeColor = Color.Lime;
             txtLogs.Location = new Point(15, 444);
-            txtLogs.Margin = new Padding(4, 4, 4, 4);
+            txtLogs.Margin = new Padding(4);
             txtLogs.Multiline = true;
             txtLogs.Name = "txtLogs";
             txtLogs.ReadOnly = true;
@@ -211,7 +212,7 @@
             // 
             cbSourceLang.DropDownStyle = ComboBoxStyle.DropDownList;
             cbSourceLang.Location = new Point(150, 138);
-            cbSourceLang.Margin = new Padding(4, 4, 4, 4);
+            cbSourceLang.Margin = new Padding(4);
             cbSourceLang.Name = "cbSourceLang";
             cbSourceLang.Size = new Size(149, 28);
             cbSourceLang.TabIndex = 5;
@@ -220,7 +221,7 @@
             // 
             cbTargetLang.DropDownStyle = ComboBoxStyle.DropDownList;
             cbTargetLang.Location = new Point(438, 138);
-            cbTargetLang.Margin = new Padding(4, 4, 4, 4);
+            cbTargetLang.Margin = new Padding(4);
             cbTargetLang.Name = "cbTargetLang";
             cbTargetLang.Size = new Size(149, 28);
             cbTargetLang.TabIndex = 7;
@@ -250,7 +251,7 @@
             numThreshold.DecimalPlaces = 3;
             numThreshold.Increment = new decimal(new int[] { 5, 0, 0, 196608 });
             numThreshold.Location = new Point(750, 138);
-            numThreshold.Margin = new Padding(4, 4, 4, 4);
+            numThreshold.Margin = new Padding(4);
             numThreshold.Maximum = new decimal(new int[] { 1, 0, 0, 0 });
             numThreshold.Minimum = new decimal(new int[] { 1, 0, 0, 196608 });
             numThreshold.Name = "numThreshold";
@@ -271,7 +272,7 @@
             // btnTestTTS
             // 
             btnTestTTS.Location = new Point(225, 184);
-            btnTestTTS.Margin = new Padding(4, 4, 4, 4);
+            btnTestTTS.Margin = new Padding(4);
             btnTestTTS.Name = "btnTestTTS";
             btnTestTTS.Size = new Size(125, 31);
             btnTestTTS.TabIndex = 14;
@@ -285,7 +286,7 @@
             chkAutoTranslate.Checked = true;
             chkAutoTranslate.CheckState = CheckState.Checked;
             chkAutoTranslate.Location = new Point(375, 188);
-            chkAutoTranslate.Margin = new Padding(4, 4, 4, 4);
+            chkAutoTranslate.Margin = new Padding(4);
             chkAutoTranslate.Name = "chkAutoTranslate";
             chkAutoTranslate.Size = new Size(190, 24);
             chkAutoTranslate.TabIndex = 13;
@@ -305,7 +306,7 @@
             // progressAudioLevel
             // 
             progressAudioLevel.Location = new Point(750, 88);
-            progressAudioLevel.Margin = new Padding(4, 4, 4, 4);
+            progressAudioLevel.Margin = new Padding(4);
             progressAudioLevel.Name = "progressAudioLevel";
             progressAudioLevel.Size = new Size(225, 29);
             progressAudioLevel.TabIndex = 12;
@@ -314,7 +315,7 @@
             // 
             cbProcessingMode.DropDownStyle = ComboBoxStyle.DropDownList;
             cbProcessingMode.Location = new Point(150, 184);
-            cbProcessingMode.Margin = new Padding(4, 4, 4, 4);
+            cbProcessingMode.Margin = new Padding(4);
             cbProcessingMode.Name = "cbProcessingMode";
             cbProcessingMode.Size = new Size(199, 28);
             cbProcessingMode.TabIndex = 22;
@@ -349,11 +350,10 @@
             chkInfiniteTests.Location = new Point(420, 50);
             chkInfiniteTests.Margin = new Padding(4, 3, 4, 3);
             chkInfiniteTests.Name = "chkInfiniteTests";
-            chkInfiniteTests.Size = new Size(210, 24);
+            chkInfiniteTests.Size = new Size(191, 24);
             chkInfiniteTests.TabIndex = 25;
             chkInfiniteTests.Text = "🔄 Бесконечные тесты";
             chkInfiniteTests.UseVisualStyleBackColor = true;
-            chkInfiniteTests.Checked = false;
             // 
             // btnTestingGuide
             // 
@@ -367,6 +367,20 @@
             btnTestingGuide.Text = "📋 Справочник";
             btnTestingGuide.UseVisualStyleBackColor = false;
             btnTestingGuide.Click += btnTestingGuide_Click;
+            // 
+            // btnDiagnosticsDashboard
+            // 
+            btnDiagnosticsDashboard.BackColor = Color.MediumPurple;
+            btnDiagnosticsDashboard.Font = new Font("Segoe UI", 9F, FontStyle.Bold);
+            btnDiagnosticsDashboard.ForeColor = Color.White;
+            btnDiagnosticsDashboard.Location = new Point(770, 44);
+            btnDiagnosticsDashboard.Margin = new Padding(4, 3, 4, 3);
+            btnDiagnosticsDashboard.Name = "btnDiagnosticsDashboard";
+            btnDiagnosticsDashboard.Size = new Size(140, 35);
+            btnDiagnosticsDashboard.TabIndex = 29;
+            btnDiagnosticsDashboard.Text = "🔍 Dashboard";
+            btnDiagnosticsDashboard.UseVisualStyleBackColor = false;
+            btnDiagnosticsDashboard.Click += btnDiagnosticsDashboard_Click;
             // 
             // btnDiagnostics
             // 
@@ -463,6 +477,7 @@
             Controls.Add(btnTestTTS);
             Controls.Add(chkInfiniteTests);
             Controls.Add(btnTestingGuide);
+            Controls.Add(btnDiagnosticsDashboard);
             Controls.Add(btnDiagnostics);
             Controls.Add(btnPerfDiag);
             Controls.Add(btnAdvancedDiag);
@@ -487,9 +502,9 @@
             Controls.Add(btnStopCapture);
             Controls.Add(btnStartCapture);
             FormBorderStyle = FormBorderStyle.FixedSingle;
-            Margin = new Padding(4, 4, 4, 4);
+            Margin = new Padding(4);
             MaximizeBox = false;
-            MinimumSize = new Size(996, 701);
+            MinimumSize = new Size(1098, 759);
             Name = "Form1";
             StartPosition = FormStartPosition.CenterScreen;
             Text = "🎧 Speaker STT → Translate → TTS Tester";
@@ -528,6 +543,7 @@
         private Label lblStats;
         private CheckBox chkInfiniteTests;
         private Button btnTestingGuide;
+        private Button btnDiagnosticsDashboard;
         private Button btnDiagnostics;
         private Button btnPerfDiag;
         private Button btnAdvancedDiag;
