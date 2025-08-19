@@ -548,15 +548,31 @@ namespace test_speaker_stt_translate_tts
                 _settingsDirty = false;
                 _lastSaveTime = DateTime.Now;
                 
-                System.Diagnostics.Debug.WriteLine($"📁 Optimized diagnostics save completed: {settings.Count} items" + 
-                    (retryCount > 0 ? $" (retry {retryCount})" : ""));
+                // Enhanced success logging with performance metrics
+                var successMessage = $"📁 Optimized diagnostics save completed: {settings.Count} items";
+                if (retryCount > 0)
+                {
+                    successMessage += $" (successful after {retryCount} retries)";
+                    System.Diagnostics.Debug.WriteLine($"✅ {successMessage}");
+                    System.Diagnostics.Debug.WriteLine($"   🎯 Final retry success - resilient save architecture working");
+                }
+                else
+                {
+                    System.Diagnostics.Debug.WriteLine($"✅ {successMessage} (direct success)");
+                }
+                System.Diagnostics.Debug.WriteLine($"   📊 File size: {new FileInfo(SettingsFilePath).Length} bytes");
             }
             catch (IOException ex) when (retryCount < maxRetries)
             {
                 // IOException retry logic for AV/indexing conflicts
                 var nextRetryCount = retryCount + 1;
                 var delay = 100 + (nextRetryCount * 150); // 250ms, 400ms delays
-                System.Diagnostics.Debug.WriteLine($"🔄 IOException retry {nextRetryCount}/{maxRetries} after {delay}ms: {ex.Message}");
+                
+                // Enhanced retry logging with detailed monitoring information
+                System.Diagnostics.Debug.WriteLine($"🔄 IOException retry {nextRetryCount}/{maxRetries} after {delay}ms");
+                System.Diagnostics.Debug.WriteLine($"   📊 Error: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"   🕒 Timestamp: {DateTime.Now:HH:mm:ss.fff}");
+                System.Diagnostics.Debug.WriteLine($"   📄 Target: {Path.GetFileName(SettingsFilePath)}");
                 
                 // Cleanup temp file before retry
                 try
@@ -564,9 +580,13 @@ namespace test_speaker_stt_translate_tts
                     if (File.Exists(tempPath))
                     {
                         File.Delete(tempPath);
+                        System.Diagnostics.Debug.WriteLine($"   🧹 Temp file cleaned: {Path.GetFileName(tempPath)}");
                     }
                 }
-                catch { /* Ignore cleanup errors */ }
+                catch (Exception cleanupEx) 
+                { 
+                    System.Diagnostics.Debug.WriteLine($"   ⚠️ Temp cleanup failed: {cleanupEx.Message}");
+                }
                 
                 // Неблокирующий ретрай через асинхронную задержку
                 ScheduleRetryAsync(delay, nextRetryCount);
@@ -632,7 +652,16 @@ namespace test_speaker_stt_translate_tts
                 }
             };
             
-            _retryTimer.Start();
+            // Ensure timer starts from UI thread for cross-thread safety
+            if (this.IsHandleCreated && this.InvokeRequired)
+            {
+                this.BeginInvoke((Action)(() => _retryTimer!.Start()));
+            }
+            else
+            {
+                _retryTimer.Start();
+            }
+            
             System.Diagnostics.Debug.WriteLine($"⏰ Scheduled non-blocking retry in {delayMs}ms (attempt {retryCount + 1})");
         }
 
