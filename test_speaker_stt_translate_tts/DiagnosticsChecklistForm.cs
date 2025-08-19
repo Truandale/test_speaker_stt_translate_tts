@@ -515,16 +515,20 @@ namespace test_speaker_stt_translate_tts
                 
                 var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
                 
-                // Atomic write using temporary file
+                // Atomic write using temporary file with UTF-8 encoding (no BOM)
                 var tempPath = SettingsFilePath + ".tmp";
-                File.WriteAllText(tempPath, json);
+                File.WriteAllText(tempPath, json, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
                 
                 // Atomic replace (Windows guarantees this is atomic)
-                if (File.Exists(SettingsFilePath))
+                try
                 {
-                    File.Delete(SettingsFilePath);
+                    File.Replace(tempPath, SettingsFilePath, null);
                 }
-                File.Move(tempPath, SettingsFilePath);
+                catch (FileNotFoundException)
+                {
+                    // First time save - target doesn't exist, use Move
+                    File.Move(tempPath, SettingsFilePath);
+                }
                 
                 _settingsDirty = false;
                 _lastSaveTime = DateTime.Now;
