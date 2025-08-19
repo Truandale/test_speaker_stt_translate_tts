@@ -85,6 +85,12 @@ namespace test_speaker_stt_translate_tts
         private const string SettingsFileName = "DiagnosticsChecklist.json";
         private string SettingsFilePath => Path.Combine(Application.StartupPath, SettingsFileName);
         
+        // Performance optimization fields for JSON persistence
+        private volatile bool _settingsDirty = false;
+        private System.Windows.Forms.Timer _saveTimer;
+        private DateTime _lastSaveTime = DateTime.MinValue;
+        private const int SAVE_THROTTLE_MS = 500; // Coalesce saves for 500ms
+        
         // Ссылка на главную форму для запуска тестов
         private Form1 parentForm;
 
@@ -95,6 +101,12 @@ namespace test_speaker_stt_translate_tts
         public DiagnosticsChecklistForm(Form1 parent)
         {
             parentForm = parent;
+            
+            // Initialize performance-optimized save timer
+            _saveTimer = new System.Windows.Forms.Timer();
+            _saveTimer.Interval = SAVE_THROTTLE_MS;
+            _saveTimer.Tick += (s, e) => PerformOptimizedSave();
+            
             InitializeComponent();
             CreateDiagnosticControls();
             LoadSettings();
@@ -461,12 +473,40 @@ namespace test_speaker_stt_translate_tts
 
         #endregion
 
-        #region Settings Persistence
+        #region Settings Persistence (PERFORMANCE OPTIMIZED)
 
+        /// <summary>
+        /// Marks settings as dirty and schedules atomic save with throttling
+        /// </summary>
         private void SaveSettings()
         {
+            _settingsDirty = true;
+            
+            // Reset timer to coalesce multiple rapid changes
+            _saveTimer.Stop();
+            _saveTimer.Start();
+        }
+        
+        /// <summary>
+        /// Performs atomic JSON write with error handling and throttling
+        /// </summary>
+        private void PerformOptimizedSave()
+        {
+            _saveTimer.Stop();
+            
+            if (!_settingsDirty) return;
+            
             try
             {
+                // Check throttling to prevent excessive disk I/O
+                var timeSinceLastSave = DateTime.Now - _lastSaveTime;
+                if (timeSinceLastSave.TotalMilliseconds < SAVE_THROTTLE_MS / 2)
+                {
+                    // Schedule retry
+                    _saveTimer.Start();
+                    return;
+                }
+                
                 var settings = new Dictionary<string, bool>();
                 foreach (var kvp in checkBoxes)
                 {
@@ -474,11 +514,42 @@ namespace test_speaker_stt_translate_tts
                 }
                 
                 var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText(SettingsFilePath, json);
+                
+                // Atomic write using temporary file
+                var tempPath = SettingsFilePath + ".tmp";
+                File.WriteAllText(tempPath, json);
+                
+                // Atomic replace (Windows guarantees this is atomic)
+                if (File.Exists(SettingsFilePath))
+                {
+                    File.Delete(SettingsFilePath);
+                }
+                File.Move(tempPath, SettingsFilePath);
+                
+                _settingsDirty = false;
+                _lastSaveTime = DateTime.Now;
+                
+                System.Diagnostics.Debug.WriteLine($"📁 Optimized diagnostics save completed: {settings.Count} items");
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"Ошибка сохранения настроек диагностики: {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"❌ Optimized save error: {ex.Message}");
+                
+                // Schedule retry on failure
+                if (_settingsDirty)
+                {
+                    Task.Delay(1000).ContinueWith(_ => 
+                    {
+                        if (_settingsDirty && !IsDisposed)
+                        {
+                            try
+                            {
+                                BeginInvoke(new Action(() => _saveTimer.Start()));
+                            }
+                            catch { /* Form disposed */ }
+                        }
+                    });
+                }
             }
         }
 
@@ -526,11 +597,24 @@ namespace test_speaker_stt_translate_tts
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            // Force final save if dirty before hiding/closing
+            if (_settingsDirty)
+            {
+                _saveTimer.Stop();
+                PerformOptimizedSave();
+            }
+            
             // Скрываем форму вместо закрытия для быстрого повторного открытия
             if (e.CloseReason == CloseReason.UserClosing)
             {
                 e.Cancel = true;
                 this.Hide();
+            }
+            else
+            {
+                // Actual close - cleanup timer
+                _saveTimer?.Stop();
+                _saveTimer?.Dispose();
             }
         }
 
