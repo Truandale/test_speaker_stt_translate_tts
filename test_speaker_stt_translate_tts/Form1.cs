@@ -101,6 +101,9 @@ namespace test_speaker_stt_translate_tts
         // Таймер для периодического отображения статистики
         private System.Windows.Forms.Timer? dropCounterTimer;
         
+        // UI константы для унифицированного управления интервалами
+        private const int UI_METRICS_INTERVAL_MS = 2000;
+        
         // CancellationToken для остановки пайплайна
         private CancellationTokenSource? _pipelineCts;
         private DateTime recordingStartTime = DateTime.Now;
@@ -171,8 +174,14 @@ namespace test_speaker_stt_translate_tts
 
                 // Cleanup device notifications
                 CleanupDeviceNotifications();
-
-                // MediaFoundation cleanup
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"OnFormClosed cleanup error: {ex.Message}");
+            }
+            finally
+            {
+                // MediaFoundation cleanup - защищен try/finally для гарантированного выполнения
                 if (Interlocked.Exchange(ref _mfInit, 0) == 1)
                 {
                     try
@@ -185,13 +194,7 @@ namespace test_speaker_stt_translate_tts
                         LogMessage($"⚠️ Предупреждение при очистке MediaFoundation: {ex.Message}");
                     }
                 }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"OnFormClosed error: {ex.Message}");
-            }
-            finally
-            {
+                
                 base.OnFormClosed(e);
             }
         }
@@ -1283,7 +1286,7 @@ namespace test_speaker_stt_translate_tts
             
             // Setup drop counter statistics timer
             dropCounterTimer = new System.Windows.Forms.Timer();
-            dropCounterTimer.Interval = 2000; // 2 seconds
+            dropCounterTimer.Interval = UI_METRICS_INTERVAL_MS;
             dropCounterTimer.Tick += (s, e) => {
                 if (_captureDropCount > 0 || _mono16kDropCount > 0 || _sttDropCount > 0)
                 {
@@ -4804,7 +4807,9 @@ namespace test_speaker_stt_translate_tts
                 catch (OperationCanceledException)
                 {
                     // Нормальная остановка - не логируем как ошибку
-                    LogMessage("⏹️ STT обработка остановлена пользователем");
+                    #if DEBUG
+                    LogMessage("🔍 [DEBUG] STT canceled - штатная остановка");
+                    #endif
                     return null;
                 }
 
