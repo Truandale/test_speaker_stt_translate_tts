@@ -13,6 +13,7 @@ using System.Text.RegularExpressions;
 using System.Diagnostics;
 using System.Linq;
 using System.Threading.Channels;
+using System.Timers;
 using System.Runtime.InteropServices;
 
 namespace test_speaker_stt_translate_tts
@@ -98,11 +99,33 @@ namespace test_speaker_stt_translate_tts
             LogMessage(stats);
         }
 
+        /// <summary>
+        /// Безопасно получить текущий default render device Id
+        /// </summary>
+        private string? GetDefaultRenderIdSafe()
+        {
+            try
+            {
+                using var dev = new MMDeviceEnumerator()
+                    .GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+                return dev?.ID;
+            }
+            catch { return null; }
+        }
+
         // Таймер для периодического отображения статистики
         private System.Windows.Forms.Timer? dropCounterTimer;
         
         // UI константы для унифицированного управления интервалами
         private const int UI_METRICS_INTERVAL_MS = 2000;
+
+        // ----- [DEVICE RESTART GUARD] -------------------------------------------
+        private readonly SemaphoreSlim _restartGate = new(1, 1);
+        private int _restarting = 0;          // 0/1 — сейчас идёт рестарт
+        private int _pendingRestart = 0;      // 0/1 — во время рестарта пришёл ещё запрос
+        private System.Timers.Timer? _restartDebounce; // коалесцируем всплеск событий
+        private volatile string? _currentRenderId;     // текущий дефолтный render-устройствo
+        private volatile bool _isClosing = false;      // закрытие формы
         
         // CancellationToken для остановки пайплайна
         private CancellationTokenSource? _pipelineCts;
@@ -160,11 +183,20 @@ namespace test_speaker_stt_translate_tts
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            _isClosing = true;
             try
             {
                 // Stop statistics timer
                 dropCounterTimer?.Stop();
                 dropCounterTimer?.Dispose();
+
+                // Stop restart debouncer
+                if (_restartDebounce is not null)
+                {
+                    _restartDebounce.Stop();
+                    _restartDebounce.Dispose();
+                    _restartDebounce = null;
+                }
 
                 // Emergency stop if something is running
                 if (emergencyStopCTS != null)
@@ -5466,6 +5498,14 @@ namespace test_speaker_stt_translate_tts
                 deviceEnumerator = new MMDeviceEnumerator();
                 notificationClient = new AudioDeviceNotificationClient(this);
                 deviceEnumerator.RegisterEndpointNotificationCallback(notificationClient);
+
+                // зафиксировать актуальный render id
+                _currentRenderId = GetDefaultRenderIdSafe();
+
+                // подготовить дебаунсер
+                _restartDebounce = new System.Timers.Timer(500) { AutoReset = false };
+                _restartDebounce.Elapsed += async (_, __) => await RestartCaptureSafeAsync().ConfigureAwait(false);
+
                 LogMessage("🔔 Мониторинг аудиоустройств инициализирован");
             }
             catch (Exception ex)
@@ -5476,63 +5516,118 @@ namespace test_speaker_stt_translate_tts
             }
         }
         
+        /// <summary>
+        /// Коллбек из AudioDeviceNotificationClient
+        /// Вызывается при смене дефолтного устройства вывода
+        /// </summary>
         public void OnDeviceChanged()
         {
-            // Вызывается при изменении аудиоустройств
-            LogMessage("🔄 Обнаружено изменение аудиоустройств - переподключение...");
+            if (_isClosing) return;
+
+            // Получаем текущий default render device ID для сравнения
+            var newRenderId = GetDefaultRenderIdSafe();
             
-            // Валидация: проверяем, что мы не в UI потоке (вызывается из уведомлений системы)
-            if (InvokeRequired)
+            // если устройство не поменялось — игнорим всплеск
+            if (!string.IsNullOrEmpty(_currentRenderId) && string.Equals(_currentRenderId, newRenderId, StringComparison.Ordinal))
+                return;
+
+            LogMessage("� Обнаружено изменение default render устройства - запуск безопасного рестарта...");
+
+            // запрос на рестарт: коалесцируем события через debounce
+            Interlocked.Exchange(ref _pendingRestart, 1);
+            _restartDebounce?.Stop();
+            _restartDebounce?.Start();
+        }
+
+        /// <summary>
+        /// Публичная «безопасная» обёртка для рестарта capture
+        /// </summary>
+        private Task RestartCaptureSafeAsync() => RestartCaptureWorkerAsync();
+
+        /// <summary>
+        /// Безопасный рестарт audio capture с защитой от гонок
+        /// </summary>
+        private async Task RestartCaptureWorkerAsync()
+        {
+            if (_isClosing) return;
+
+            // если уже идёт рестарт — помечаем pending и выходим
+            if (Interlocked.Exchange(ref _restarting, 1) == 1)
             {
-                LogMessage("⚠️ OnDeviceChanged вызван из не-UI потока - переносим в UI поток");
-                Invoke(new Action(OnDeviceChanged));
+                Interlocked.Exchange(ref _pendingRestart, 1);
                 return;
             }
-            
-            Task.Run(async () =>
+
+            try
             {
-                await Task.Delay(1000); // Короткая пауза для стабилизации
-                
-                try
+                await _restartGate.WaitAsync().ConfigureAwait(false);
+
+                // цикл: пока в процессе рестарта прилетают новые события — повторим
+                int backoffMs = 250;
+                do
                 {
-                    Invoke(() =>
+                    Interlocked.Exchange(ref _pendingRestart, 0);
+
+                    if (_isClosing) break;
+                    LogMessage("🔄 Перезапуск loopback-захвата (смена устройства)...");
+
+                    try
                     {
-                        // Валидация: проверяем состояние перед переподключением
-                        bool wasCapturing = isCapturing;
-                        string currentDeviceName = cbSpeakerDevices.SelectedItem is AudioDevice currentDevice 
-                            ? currentDevice.Name 
-                            : "Не выбрано";
-                        
-                        LogMessage($"📊 Состояние до переподключения: запись={wasCapturing}, устройство={currentDeviceName}");
-                        
-                        StopRecording(); // Остановить текущую запись
-                        RefreshAudioDevices(); // Обновить список устройств
-                        
-                        // Автоматически переподключиться к лучшему доступному устройству
-                        if (availableSpeakerDevices.Count > 0)
+                        // 1) Безопасная остановка текущего capture
+                        var wasCapturing = isCapturing;
+                        if (wasCapturing)
                         {
-                            var bestDevice = availableSpeakerDevices.First();
-                            SetSpeakerDevice(bestDevice);
-                            LogMessage($"🔄 Автоматически переподключен к: {bestDevice.FriendlyName}");
-                            
-                            // Валидация: если запись была активна, автоматически возобновляем
-                            if (wasCapturing)
-                            {
-                                LogMessage("🎤 Возобновляем запись после переподключения устройства");
-                                Task.Delay(500).ContinueWith(_ => Invoke(() => StartAudioCapture()));
+                            this.Invoke(() => {
+                                try { StopRecording(); } catch { /* ignore */ }
+                            });
+                        }
+
+                        // 2) обновить текущий render id
+                        _currentRenderId = GetDefaultRenderIdSafe();
+
+                        // 3) обновить список устройств и переподключиться
+                        this.Invoke(() => {
+                            try 
+                            { 
+                                RefreshAudioDevices(); 
+                                if (availableSpeakerDevices.Count > 0 && wasCapturing)
+                                {
+                                    var bestDevice = availableSpeakerDevices.First();
+                                    SetSpeakerDevice(bestDevice);
+                                    LogMessage($"🔄 Переподключен к: {bestDevice.FriendlyName}");
+                                    
+                                    // Небольшая пауза и возобновление capture
+                                    Task.Delay(500).ContinueWith(_ => this.Invoke(() => {
+                                        try { StartAudioCapture(); } catch (Exception ex) { LogMessage($"❌ Ошибка возобновления capture: {ex.Message}"); }
+                                    }));
+                                }
+                            } 
+                            catch (Exception ex) 
+                            { 
+                                LogMessage($"❌ Ошибка UI операций в рестарте: {ex.Message}"); 
+                                throw; 
                             }
-                        }
-                        else
-                        {
-                            LogMessage("⚠️ Нет доступных аудиоустройств после изменения!");
-                        }
-                    });
+                        });
+
+                        LogMessage("✅ Захват перезапущен");
+                        backoffMs = 250; // reset backoff on success
+                    }
+                    catch (Exception ex)
+                    {
+                        LogMessage($"❌ Ошибка рестарта loopback: {ex.Message}");
+                        // бэкофф и повторная попытка, если во время рестарта пришёл новый запрос
+                        await Task.Delay(backoffMs).ConfigureAwait(false);
+                        backoffMs = Math.Min(backoffMs * 2, 5000);
+                        Interlocked.Exchange(ref _pendingRestart, 1);
+                    }
                 }
-                catch (Exception ex)
-                {
-                    LogMessage($"❌ Ошибка автоматического переподключения: {ex.Message}");
-                }
-            });
+                while (Volatile.Read(ref _pendingRestart) == 1 && !_isClosing);
+            }
+            finally
+            {
+                if (_restartGate.CurrentCount == 0) _restartGate.Release();
+                Interlocked.Exchange(ref _restarting, 0);
+            }
         }
         
         private void CleanupDeviceNotifications()
