@@ -66,19 +66,22 @@ namespace test_speaker_stt_translate_tts
             Channel.CreateBounded<byte[]>(new BoundedChannelOptions(64) { 
                 SingleWriter = true, 
                 SingleReader = true,
-                FullMode = BoundedChannelFullMode.DropOldest 
+                FullMode = BoundedChannelFullMode.DropOldest,
+                AllowSynchronousContinuations = false
             });
         private readonly Channel<float[]> _mono16kChannel = 
             Channel.CreateBounded<float[]>(new BoundedChannelOptions(64) { 
                 SingleWriter = true,
                 SingleReader = true,
-                FullMode = BoundedChannelFullMode.DropOldest 
+                FullMode = BoundedChannelFullMode.DropOldest,
+                AllowSynchronousContinuations = false
             });
         private readonly Channel<string> _sttChannel = 
             Channel.CreateBounded<string>(new BoundedChannelOptions(64) { 
                 SingleWriter = true,
                 SingleReader = true,
-                FullMode = BoundedChannelFullMode.DropOldest 
+                FullMode = BoundedChannelFullMode.DropOldest,
+                AllowSynchronousContinuations = false
             });
         
         // Drop counters for performance monitoring
@@ -94,6 +97,9 @@ namespace test_speaker_stt_translate_tts
             var stats = $"📊 Статистика сбросов: Capture={_captureDropCount}, Mono16k={_mono16kDropCount}, STT={_sttDropCount}";
             LogMessage(stats);
         }
+
+        // Таймер для периодического отображения статистики
+        private System.Windows.Forms.Timer? dropCounterTimer;
         
         // CancellationToken для остановки пайплайна
         private CancellationTokenSource? _pipelineCts;
@@ -128,32 +134,23 @@ namespace test_speaker_stt_translate_tts
         // Emergency Stop Management
         private CancellationTokenSource? emergencyStopCTS;
 
-        // MediaFoundation lifecycle управление
-        private static int _mfInitialized = 0;
-        
-        // MediaFoundation lifecycle management - Singleton pattern  
-        private static volatile bool mfInitialized = false;
-        private static readonly object mfLock = new object();
+        // MediaFoundation lifecycle управление - Single Interlocked flag
+        private static int _mfInit = 0;
 
         private void EnsureMediaFoundation()
         {
-            if (!mfInitialized)
+            if (Interlocked.Exchange(ref _mfInit, 1) == 0)
             {
-                lock (mfLock)
+                try
                 {
-                    if (!mfInitialized)
-                    {
-                        try
-                        {
-                            // MediaFoundation.Initialize(); // Uncomment when MediaFoundation is available
-                            mfInitialized = true;
-                            LogMessage("🔧 MediaFoundation инициализирован");
-                        }
-                        catch (Exception ex)
-                        {
-                            LogMessage($"❌ Ошибка инициализации MediaFoundation: {ex.Message}");
-                        }
-                    }
+                    MediaFoundationApi.Startup();
+                    LogMessage("🔧 MediaFoundation инициализирован");
+                }
+                catch (Exception ex)
+                {
+                    // Reset flag on failure
+                    Interlocked.Exchange(ref _mfInit, 0);
+                    LogMessage($"❌ Ошибка инициализации MediaFoundation: {ex.Message}");
                 }
             }
         }
@@ -162,18 +159,25 @@ namespace test_speaker_stt_translate_tts
         {
             try
             {
+                // Stop statistics timer
+                dropCounterTimer?.Stop();
+                dropCounterTimer?.Dispose();
+
                 // Emergency stop if something is running
                 if (emergencyStopCTS != null)
                 {
                     EmergencyStopAllTesting();
                 }
 
+                // Cleanup device notifications
+                CleanupDeviceNotifications();
+
                 // MediaFoundation cleanup
-                if (mfInitialized)
+                if (Interlocked.Exchange(ref _mfInit, 0) == 1)
                 {
                     try
                     {
-                        // MediaFoundation.Shutdown(); // Uncomment when MediaFoundation is available
+                        MediaFoundationApi.Shutdown();
                         LogMessage("🔧 MediaFoundation очищен");
                     }
                     catch (Exception ex)
@@ -1276,6 +1280,17 @@ namespace test_speaker_stt_translate_tts
             
             // Настройка ESC для экстренной остановки через нативный механизм
             this.CancelButton = btnEmergencyStop;
+            
+            // Setup drop counter statistics timer
+            dropCounterTimer = new System.Windows.Forms.Timer();
+            dropCounterTimer.Interval = 2000; // 2 seconds
+            dropCounterTimer.Tick += (s, e) => {
+                if (_captureDropCount > 0 || _mono16kDropCount > 0 || _sttDropCount > 0)
+                {
+                    DisplayDropCounterStats();
+                }
+            };
+            dropCounterTimer.Start();
             
             // Подписываемся на событие закрытия формы для корректной очистки ресурсов
             this.FormClosing += Form1_OnFormClosing;
@@ -4770,18 +4785,27 @@ namespace test_speaker_stt_translate_tts
 
                 // STT обработка with enhanced cancellation support
                 var segments = new List<string>();
-                await foreach (var segment in _whisperProcessor.ProcessAsync(audioStream, ct).WithCancellation(ct))
+                try
                 {
-                    if (!string.IsNullOrWhiteSpace(segment.Text))
+                    await foreach (var segment in _whisperProcessor.ProcessAsync(audioStream, ct).WithCancellation(ct))
                     {
-                        var cleanedText = CleanWhisperText(segment.Text);
-                        if (!string.IsNullOrWhiteSpace(cleanedText) && 
-                            !IsPlaceholderToken(cleanedText))
+                        if (!string.IsNullOrWhiteSpace(segment.Text))
                         {
-                            segments.Add(cleanedText);
-                            LogMessage($"📝 STT сегмент: '{cleanedText}' (conf: {segment.Probability:F3})");
+                            var cleanedText = CleanWhisperText(segment.Text);
+                            if (!string.IsNullOrWhiteSpace(cleanedText) && 
+                                !IsPlaceholderToken(cleanedText))
+                            {
+                                segments.Add(cleanedText);
+                                LogMessage($"📝 STT сегмент: '{cleanedText}' (conf: {segment.Probability:F3})");
+                            }
                         }
                     }
+                }
+                catch (OperationCanceledException)
+                {
+                    // Нормальная остановка - не логируем как ошибку
+                    LogMessage("⏹️ STT обработка остановлена пользователем");
+                    return null;
                 }
 
                 var finalText = string.Join(" ", segments).Trim();
@@ -5426,27 +5450,24 @@ namespace test_speaker_stt_translate_tts
         // 🚀 АВТОМАТИЧЕСКОЕ ПЕРЕПОДКЛЮЧЕНИЕ устройств при HDMI/Bluetooth переключении
         private MMDeviceEnumerator? deviceEnumerator;
         private AudioDeviceNotificationClient? notificationClient;
-        private static int _deviceNotificationsInitialized = 0; // Interlocked flag for idempotent registration
+        private static int _devNotifInit = 0; // Interlocked flag for idempotent registration
         
         private void InitializeDeviceNotifications()
         {
-            // Idempotent initialization with Interlocked for thread safety
-            if (Interlocked.CompareExchange(ref _deviceNotificationsInitialized, 1, 0) == 0)
+            if (Interlocked.CompareExchange(ref _devNotifInit, 1, 0) != 0) return;
+
+            try
             {
-                try
-                {
-                    deviceEnumerator = new MMDeviceEnumerator();
-                    notificationClient = new AudioDeviceNotificationClient(this);
-                    deviceEnumerator.RegisterEndpointNotificationCallback(notificationClient);
-                    
-                    LogMessage("🔔 Инициализирован мониторинг аудиоустройств");
-                }
-                catch (Exception ex)
-                {
-                    // Reset flag on failure
-                    Interlocked.Exchange(ref _deviceNotificationsInitialized, 0);
-                    LogMessage($"⚠️ Не удалось инициализировать мониторинг устройств: {ex.Message}");
-                }
+                deviceEnumerator = new MMDeviceEnumerator();
+                notificationClient = new AudioDeviceNotificationClient(this);
+                deviceEnumerator.RegisterEndpointNotificationCallback(notificationClient);
+                LogMessage("🔔 Мониторинг аудиоустройств инициализирован");
+            }
+            catch (Exception ex)
+            {
+                // Reset flag on failure
+                Interlocked.Exchange(ref _devNotifInit, 0);
+                LogMessage($"⚠️ Не удалось инициализировать мониторинг устройств: {ex.Message}");
             }
         }
         
@@ -5511,20 +5532,14 @@ namespace test_speaker_stt_translate_tts
         
         private void CleanupDeviceNotifications()
         {
-            // Idempotent cleanup with Interlocked for thread safety
-            if (Interlocked.CompareExchange(ref _deviceNotificationsInitialized, 0, 1) == 1)
+            if (Interlocked.Exchange(ref _devNotifInit, 0) == 1)
             {
-                try
-                {
-                    if (deviceEnumerator != null && notificationClient != null)
-                    {
-                        deviceEnumerator.UnregisterEndpointNotificationCallback(notificationClient);
-                    }
-                    
+                try 
+                { 
+                    deviceEnumerator?.UnregisterEndpointNotificationCallback(notificationClient); 
                     deviceEnumerator?.Dispose();
                     notificationClient = null;
                     deviceEnumerator = null;
-                    
                     LogMessage("🔔 Мониторинг аудиоустройств очищен");
                 }
                 catch (Exception ex)
