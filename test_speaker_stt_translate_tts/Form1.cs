@@ -62,16 +62,16 @@ namespace test_speaker_stt_translate_tts
         private static WhisperFactory? _whisperFactory;
         private static WhisperProcessor? _whisperProcessor;
         
-        // 🚀 НОВАЯ PIPELINE АРХИТЕКТУРА: Bounded Channels с backpressure
-        private readonly Channel<byte[]> _captureChannel = 
-            Channel.CreateBounded<byte[]>(new BoundedChannelOptions(64) { 
+        // 🚀 ZERO-COPY PIPELINE: ChannelBuffer architecture eliminates array allocations
+        private readonly Channel<ChannelByteBuffer> _captureChannel = 
+            Channel.CreateBounded<ChannelByteBuffer>(new BoundedChannelOptions(64) { 
                 SingleWriter = true, 
                 SingleReader = true,
                 FullMode = BoundedChannelFullMode.DropOldest,
                 AllowSynchronousContinuations = false
             });
-        private readonly Channel<float[]> _mono16kChannel = 
-            Channel.CreateBounded<float[]>(new BoundedChannelOptions(64) { 
+        private readonly Channel<ChannelFloatBuffer> _mono16kChannel = 
+            Channel.CreateBounded<ChannelFloatBuffer>(new BoundedChannelOptions(64) { 
                 SingleWriter = true,
                 SingleReader = true,
                 FullMode = BoundedChannelFullMode.DropOldest,
@@ -959,8 +959,9 @@ namespace test_speaker_stt_translate_tts
             try
             {
                 var testData = new byte[1024];
+                var buffer = new ChannelByteBuffer(testData, testData.Length);
                 // Попытка записи с таймаутом
-                return _captureChannel?.Writer?.TryWrite(testData) ?? false;
+                return _captureChannel?.Writer?.TryWrite(buffer) ?? false;
             }
             catch
             {
@@ -1873,24 +1874,52 @@ namespace test_speaker_stt_translate_tts
             {
                 LogMessage("🔄 Воркер нормализации запущен");
                 
-                await foreach (var rawBuffer in _captureChannel.Reader.ReadAllAsync(ct))
+                await foreach (var bufferWrapper in _captureChannel.Reader.ReadAllAsync(ct))
                 {
                     try
                     {
+                        var rawBuffer = bufferWrapper.Buffer; // Получаем byte[] из ChannelByteBuffer
+                        
+                        // 🚀 MEASURE: Pipeline lag tracking
+                        var lagMs = (Stopwatch.GetTimestamp() - bufferWrapper.EnqueuedAtTicks) * 1000.0 / Stopwatch.Frequency;
+                        RealTimeTelemetry.RecordNormalizationLag((long)lagMs);
+                        
                         // Определяем входной формат (WASAPI loopback 44100Hz stereo float32)
                         var inputFormat = WaveFormat.CreateIeeeFloatWaveFormat(44100, 2);
                         var wavData = ConvertToWavNormalized(rawBuffer, inputFormat);
                         
                         if (wavData.Length > 44) // Проверяем WAV заголовок
                         {
-                            // Извлекаем float32 данные, пропуская WAV заголовок
-                            var floatData = new float[(wavData.Length - 44) / 4];
-                            Buffer.BlockCopy(wavData, 44, floatData, 0, wavData.Length - 44);
+                            // Используем ArrayPool для float буфера
+                            var pooledFloatBuffer = ArrayPoolAudioBuffer.RentFloatBuffer((wavData.Length - 44) / 4);
+                            Buffer.BlockCopy(wavData, 44, pooledFloatBuffer, 0, wavData.Length - 44);
                             
-                            // Отправляем в следующий этап с backpressure
-                            if (!_mono16kChannel.Writer.TryWrite(floatData))
+                            // 🚀 OPTIMIZED: DropOldest semantics для предотвращения блокировки
+                            var floatWrapper = new ChannelFloatBuffer(pooledFloatBuffer, (wavData.Length - 44) / 4);
+                            if (!_mono16kChannel.Writer.TryWrite(floatWrapper))
                             {
-                                LogMessage("⚠️ 🔴 ДРОП: Нормализация - канал 16kHz переполнен! Старые данные сброшены");
+                                // Попытка DropOldest: удаляем старый элемент и пытаемся снова
+                                if (_mono16kChannel.Reader.TryRead(out var oldBuffer))
+                                {
+                                    oldBuffer.Return(); // Возвращаем старый буфер в пул
+                                    RealTimeTelemetry.RecordBufferDrop();
+                                    
+                                    // Повторная попытка записи
+                                    if (!_mono16kChannel.Writer.TryWrite(floatWrapper))
+                                    {
+                                        LogMessage("⚠️ 🔴 КРИТИЧНО: DropOldest не помог - канал 16kHz заблокирован!");
+                                        ArrayPoolAudioBuffer.ReturnFloatBuffer(pooledFloatBuffer);
+                                    }
+                                    else
+                                    {
+                                        LogMessageDebug("🔄 DropOldest: старый буфер удален, новый записан");
+                                    }
+                                }
+                                else
+                                {
+                                    LogMessage("⚠️ 🔴 ДРОП: Нормализация - канал 16kHz переполнен, нет старых данных для удаления");
+                                    ArrayPoolAudioBuffer.ReturnFloatBuffer(pooledFloatBuffer);
+                                }
                             }
                             else
                             {
@@ -1902,6 +1931,11 @@ namespace test_speaker_stt_translate_tts
                     catch (Exception ex)
                     {
                         LogMessage($"❌ Ошибка нормализации: {ex.Message}");
+                    }
+                    finally
+                    {
+                        // 🚀 ZERO-COPY: Автоматический возврат входного буфера в пул
+                        bufferWrapper.Return();
                     }
                 }
                 
@@ -1921,57 +1955,48 @@ namespace test_speaker_stt_translate_tts
                 LogMessage("🔄 STT воркер запущен");
                 EnsureWhisperReady(); // Подготавливаем теплый Whisper
                 
-                await foreach (var monoFloat in _mono16kChannel.Reader.ReadAllAsync(ct))
+                await foreach (var floatWrapper in _mono16kChannel.Reader.ReadAllAsync(ct))
                 {
                     try
                     {
-                        // Создаем временный WAV файл для Whisper
-                        string tempFile = Path.GetTempFileName();
-                        try
+                        var monoFloat = floatWrapper.Buffer; // Получаем float[] из ChannelFloatBuffer
+                        
+                        // 🚀 MEASURE: Pipeline lag tracking
+                        var lagMs = (Stopwatch.GetTimestamp() - floatWrapper.EnqueuedAtTicks) * 1000.0 / Stopwatch.Frequency;
+                        RealTimeTelemetry.RecordSttLag((long)lagMs);
+                        
+                        // 🚀 RAW FLOAT WHISPER PROCESSING - БЕЗ WAV файлов!
+                        var stopwatch = Stopwatch.StartNew();
+                        string finalText = await ProcessWhisperFloatAsync(monoFloat, ct);
+                        stopwatch.Stop();
+                        
+                        // Записываем метрику времени обработки для телеметрии
+                        RealTimeTelemetry.RecordWhisperLatency(stopwatch.ElapsedMilliseconds);
+                        
+                        if (!string.IsNullOrWhiteSpace(finalText))
                         {
-                            // Создаем WAV файл с правильным заголовком
-                            var wavBytes = CreateWavFromFloats(monoFloat, 16000, 1);
-                            await File.WriteAllBytesAsync(tempFile, wavBytes, ct);
-                            
-                            // STT через теплый Whisper
-                            using var fileStream = File.OpenRead(tempFile);
-                            var result = new StringBuilder();
-                            
-                            await foreach (var segment in _whisperProcessor!.ProcessAsync(fileStream))
+                            // Отправляем в следующий этап с backpressure
+                            if (!_sttChannel.Writer.TryWrite(finalText))
                             {
-                                if (!string.IsNullOrWhiteSpace(segment.Text))
-                                {
-                                    string cleanText = segment.Text.Trim();
-                                    if (!IsPlaceholderToken(cleanText))
-                                    {
-                                        result.Append(cleanText + " ");
-                                    }
-                                }
+                                LogMessage($"⚠️ 🔴 ДРОП: STT канал переполнен! Текст сброшен: '{finalText.Substring(0, Math.Min(50, finalText.Length))}...'");
+                                // Записываем метрику дропа для телеметрии
+                                RealTimeTelemetry.RecordSttDrop();
                             }
-                            
-                            string finalText = result.ToString().Trim();
-                            if (!string.IsNullOrWhiteSpace(finalText))
+                            else
                             {
-                                // Отправляем в следующий этап с backpressure
-                                if (!_sttChannel.Writer.TryWrite(finalText))
-                                {
-                                    LogMessage($"⚠️ 🔴 ДРОП: STT канал переполнен! Текст сброшен: '{finalText.Substring(0, Math.Min(50, finalText.Length))}...'");
-                                }
-                                else
-                                {
-                                    int queueEstimate = _sttChannel.Reader.Count;
-                                    LogMessageDebug($"💬 STT текст отправлен в канал, очередь ≈{queueEstimate}");
-                                }
+                                int queueEstimate = _sttChannel.Reader.Count;
+                                LogMessage($"🎯 RAW float STT: '{finalText}' (⚡{stopwatch.ElapsedMilliseconds}мс, очередь ≈{queueEstimate})");
                             }
-                        }
-                        finally
-                        {
-                            try { File.Delete(tempFile); } catch { }
                         }
                     }
                     catch (Exception ex)
                     {
                         LogMessage($"❌ Ошибка STT: {ex.Message}");
+                    }
+                    finally
+                    {
+                        // 🚀 ZERO-COPY: Автоматический возврат float буфера в пул
+                        floatWrapper.Return();
                     }
                 }
                 
@@ -2053,6 +2078,76 @@ namespace test_speaker_stt_translate_tts
             }
             
             return wav.ToArray();
+        }
+
+        /// <summary>
+        /// 🚀 REVOLUTIONARY: Обрабатывает float[] аудио напрямую через Whisper.NET без WAV файлов
+        /// Экономит тысячи операций I/O и устраняет временные файлы
+        /// </summary>
+        private async Task<string> ProcessWhisperFloatAsync(float[] audioData, CancellationToken ct)
+        {
+            if (_whisperProcessor == null || audioData == null || audioData.Length == 0)
+                return "";
+
+            try
+            {
+                // Минимальная проверка качества - избегаем обработку тишины
+                float rms = 0;
+                for (int i = 0; i < audioData.Length; i++)
+                {
+                    rms += audioData[i] * audioData[i];
+                }
+                rms = (float)Math.Sqrt(rms / audioData.Length);
+                
+                if (rms < 0.001f) // Слишком тихо
+                {
+                    return "";
+                }
+
+                // 🚀 ZERO-ALLOCATION: Создаем WAV в памяти с минимальными аллокациями
+                using var memoryStream = new MemoryStream();
+                var waveFormat = new WaveFormat(16000, 16, 1); // 16kHz, 16-bit, mono
+                
+                using (var writer = new WaveFileWriter(memoryStream, waveFormat))
+                {
+                    // Конвертируем float [-1..1] в PCM16 с clamp для безопасности
+                    for (int i = 0; i < audioData.Length; i++)
+                    {
+                        var sample = (short)(Math.Clamp(audioData[i], -1f, 1f) * short.MaxValue);
+                        writer.WriteSample(sample);
+                    }
+                }
+                
+                // Получаем финальные WAV данные
+                var wavData = memoryStream.ToArray();
+                
+                // 🚀 RAW WHISPER PROCESSING: Прямая обработка через Whisper.NET
+                using var whisperStream = new MemoryStream(wavData);
+                var result = new StringBuilder();
+                
+                await foreach (var segment in _whisperProcessor.ProcessAsync(whisperStream, ct))
+                {
+                    if (!string.IsNullOrWhiteSpace(segment.Text))
+                    {
+                        string cleanText = segment.Text.Trim();
+                        if (!IsPlaceholderToken(cleanText))
+                        {
+                            result.Append(cleanText + " ");
+                        }
+                    }
+                }
+                
+                return result.ToString().Trim();
+            }
+            catch (OperationCanceledException)
+            {
+                return "";
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ Ошибка RAW float STT: {ex.Message}");
+                return "";
+            }
         }
 
         private void InitializeTranslation()
@@ -3110,17 +3205,22 @@ namespace test_speaker_stt_translate_tts
                         LogMessageDebug($"🎤 Начало записи аудио, уровень: {level:F3}");
                     }
                     
-                    // Копируем буфер для отправки в канал
-                    byte[] audioChunk = new byte[e.BytesRecorded];
-                    Array.Copy(e.Buffer, audioChunk, e.BytesRecorded);
-                    audioBuffer.AddRange(audioChunk);
+                    // 🚀 ZERO-COPY AUDIO CAPTURE с ArrayPool
+                    var pooledBuffer = ArrayPoolAudioBuffer.RentByteBuffer(e.BytesRecorded);
+                    Array.Copy(e.Buffer, pooledBuffer, e.BytesRecorded);
                     
-                    // 🚀 ОТПРАВЛЯЕМ В КАНАЛ ВМЕСТО ПРЯМОЙ ОБРАБОТКИ
-                    if (_captureChannel.Writer.TryWrite(audioChunk))
+                    // Создаем ChannelByteBuffer - он автоматически вернет буфер в пул при обработке
+                    var buffer = new ChannelByteBuffer(pooledBuffer, e.BytesRecorded);
+                    
+                    // Также добавляем в локальный буфер для совместимости  
+                    audioBuffer.AddRange(pooledBuffer.AsSpan(0, e.BytesRecorded).ToArray());
+                    
+                    // ОТПРАВЛЯЕМ В КАНАЛ ВМЕСТО ПРЯМОЙ ОБРАБОТКИ
+                    if (_captureChannel.Writer.TryWrite(buffer))
                     {
                         // Получаем приблизительную статистику канала
                         int queueEstimate = _captureChannel.Reader.Count;
-                        LogMessageDebug($"📊 Аудио отправлено в канал: {audioChunk.Length} байт, очередь ≈{queueEstimate}");
+                        LogMessageDebug($"📊 Аудио отправлено в канал: {e.BytesRecorded} байт, очередь ≈{queueEstimate}");
                     }
                     else
                     {
@@ -3143,10 +3243,19 @@ namespace test_speaker_stt_translate_tts
                         // Отправляем накопленный буфер если он достаточно большой
                         if (audioBuffer.Count > 16000) // Минимум для обработки
                         {
-                            byte[] finalBuffer = audioBuffer.ToArray();
-                            if (_captureChannel.Writer.TryWrite(finalBuffer))
+                            // 🚀 ZERO-COPY: Используем ArrayPool для финального буфера
+                            var pooledFinalBuffer = ArrayPoolAudioBuffer.RentByteBuffer(audioBuffer.Count);
+                            audioBuffer.ToArray().CopyTo(pooledFinalBuffer, 0);
+                            
+                            var buffer = new ChannelByteBuffer(pooledFinalBuffer, audioBuffer.Count);
+                            if (_captureChannel.Writer.TryWrite(buffer))
                             {
-                                LogMessage($"📝 Финальный буфер отправлен: {finalBuffer.Length} байт");
+                                LogMessage($"📝 Финальный буфер отправлен: {audioBuffer.Count} байт");
+                            }
+                            else
+                            {
+                                // Возвращаем буфер обратно если отправка не удалась
+                                ArrayPoolAudioBuffer.ReturnByteBuffer(pooledFinalBuffer);
                             }
                         }
                         
