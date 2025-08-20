@@ -763,6 +763,107 @@ namespace test_speaker_stt_translate_tts
         }
 
         #endregion
+        
+        #region Release Gate Integration
+        
+        // 🚀 Release Gate status tracking
+        private Label? lblReleaseGate;
+        private Button? btnOpenLastReport;
+        private string? _lastReportPath;
+        
+        public void ApplyReleaseGate(bool passed, string[] reasons, string reportPath)
+        {
+            if (IsDisposed) return;
+            if (InvokeRequired) 
+            { 
+                BeginInvoke(new Action(() => ApplyReleaseGate(passed, reasons, reportPath))); 
+                return; 
+            }
+
+            _lastReportPath = reportPath;
+            
+            // Create Release Gate controls if they don't exist
+            if (lblReleaseGate == null)
+            {
+                CreateReleaseGateControls();
+            }
+            
+            if (lblReleaseGate != null)
+            {
+                lblReleaseGate.Text = passed ? "🚀 Release Gate: PASSED ✅" : "❌ Release Gate: FAILED";
+                lblReleaseGate.ForeColor = passed ? Color.ForestGreen : Color.IndianRed;
+                
+                if (!passed && reasons.Length > 0)
+                {
+                    lblReleaseGate.Text += $" ({reasons.Length} issues)";
+                }
+            }
+            
+            if (btnOpenLastReport != null)
+            {
+                btnOpenLastReport.Enabled = !string.IsNullOrEmpty(reportPath) && File.Exists(reportPath);
+            }
+        }
+        
+        private void CreateReleaseGateControls()
+        {
+            try
+            {
+                // Create Release Gate label
+                lblReleaseGate = new Label
+                {
+                    Text = "🚀 Release Gate: не запущен",
+                    Font = new Font("Segoe UI", 9, FontStyle.Bold),
+                    ForeColor = Color.Gray,
+                    AutoSize = true,
+                    Location = new Point(12, this.ClientSize.Height - 60),
+                    Anchor = AnchorStyles.Bottom | AnchorStyles.Left
+                };
+                
+                // Create report button
+                btnOpenLastReport = new Button
+                {
+                    Text = "📄 Отчет",
+                    Font = new Font("Segoe UI", 8),
+                    Size = new Size(60, 23),
+                    Location = new Point(lblReleaseGate.Right + 10, lblReleaseGate.Top - 2),
+                    Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
+                    Enabled = false,
+                    UseVisualStyleBackColor = true
+                };
+                
+                btnOpenLastReport.Click += (s, e) => OpenLastReport();
+                
+                this.Controls.Add(lblReleaseGate);
+                this.Controls.Add(btnOpenLastReport);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Error creating Release Gate controls: {ex.Message}");
+            }
+        }
+        
+        private void OpenLastReport()
+        {
+            if (!string.IsNullOrEmpty(_lastReportPath) && File.Exists(_lastReportPath))
+            {
+                try
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo 
+                    { 
+                        FileName = _lastReportPath, 
+                        UseShellExecute = true 
+                    });
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Не удалось открыть отчет:\n{ex.Message}", "Ошибка", 
+                                  MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                }
+            }
+        }
+        
+        #endregion
     }
 
     #region Helper Classes

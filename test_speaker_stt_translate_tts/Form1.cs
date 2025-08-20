@@ -1306,7 +1306,8 @@ namespace test_speaker_stt_translate_tts
                 "• Индивидуальные кнопки сброса для каждого пункта\n" +
                 "• Автосохранение состояния в DiagnosticsChecklist.json\n" +
                 "• Кнопка запуска всех тестов одним кликом\n" +
-                "• Поддержка горячих клавиш (F5, ESC)");
+                "• Поддержка горячих клавиш (F5, ESC)\n\n" +
+                "🚀 Release Gate (F12) - SLO проверка готовности к релизу");
 
             // Экстренная остановка
             var emergencyTooltip = new ToolTip();
@@ -1364,6 +1365,11 @@ namespace test_speaker_stt_translate_tts
                 else if (e.KeyCode == Keys.F11)
                 {
                     ShowDiagnosticsDashboard();
+                    e.Handled = true;
+                }
+                else if (e.KeyCode == Keys.F12)
+                {
+                    _ = RunReleaseGateAsync();
                     e.Handled = true;
                 }
                 // ESC теперь обрабатывается через CancelButton
@@ -6676,6 +6682,91 @@ TTS (СИНТЕЗ РЕЧИ):
             catch (Exception ex)
             {
                 LogMessage($"❌ Ошибка открытия диагностического dashboard: {ex.Message}");
+            }
+        }
+
+        // 🚀 RELEASE GATE: SLO-based regression testing
+        private CancellationTokenSource? _releaseGateTokenSource = null;
+        
+        private async Task RunReleaseGateAsync()
+        {
+            try
+            {
+                // Cancel any existing Release Gate run
+                _releaseGateTokenSource?.Cancel();
+                _releaseGateTokenSource = new CancellationTokenSource();
+                
+                var slo = Regression.SloConfig.Load();
+                var runner = new Regression.RegressionRunner(slo, TimeSpan.FromMinutes(60), _releaseGateTokenSource.Token);
+                
+                LogMessage("🚀 RELEASE GATE: Начинаю SLO regression-тест (60 мин)...");
+                LogMessage($"🎯 SLO цели: E2E P95≤{slo.LatencyE2eP95Ms}ms, STT P95≤{slo.LagSttP95Ms}ms, CPU≤{slo.CpuAvgPercent}%, WS≤{slo.WorkingSetMb}MB");
+                
+                var report = await runner.RunAsync();
+                
+                if (report.Passed)
+                {
+                    LogMessage($"✅ RELEASE GATE: PASSED - система готова к релизу!");
+                    LogMessage($"📊 Метрики: E2E P95={report.LatencyE2eP95Ms:F0}ms, STT P95={report.LagSttP95Ms:F0}ms, CPU={report.CpuAvgPercent:F1}%, WS={report.WorkingSetMb:F0}MB");
+                    LogMessage($"📄 Отчет сохранен: {report.ReportPath}");
+                    
+                    // Notify dashboard if open
+                    try 
+                    { 
+                        diagnosticsDashboard?.BeginInvoke(new Action(() => 
+                            diagnosticsDashboard?.ApplyReleaseGate(true, Array.Empty<string>(), report.ReportPath)));
+                    }
+                    catch { /* dashboard not available */ }
+                    
+                    MessageBox.Show(
+                        $"🚀 RELEASE GATE PASSED ✅\n\n" +
+                        $"Система готова к production релизу!\n\n" +
+                        $"📊 Финальные метрики:\n" +
+                        $"• E2E P95: {report.LatencyE2eP95Ms:F0}ms (цель ≤{slo.LatencyE2eP95Ms}ms)\n" +
+                        $"• STT P95: {report.LagSttP95Ms:F0}ms (цель ≤{slo.LagSttP95Ms}ms)\n" +
+                        $"• CPU: {report.CpuAvgPercent:F1}% (цель ≤{slo.CpuAvgPercent}%)\n" +
+                        $"• Memory: {report.WorkingSetMb:F0}MB (цель ≤{slo.WorkingSetMb}MB)\n\n" +
+                        $"🔒 Рекомендация: FREEZE оптимизаций\n" +
+                        $"📄 Отчет: {Path.GetFileName(report.ReportPath)}", 
+                        "Release Gate - SUCCESS", 
+                        MessageBoxButtons.OK, 
+                        MessageBoxIcon.Information);
+                }
+                else
+                {
+                    LogMessage($"❌ RELEASE GATE: FAILED - требуются доработки");
+                    LogMessage($"🚨 Нарушения SLO: {string.Join(", ", report.FailReasons)}");
+                    LogMessage($"📄 Отчет сохранен: {report.ReportPath}");
+                    
+                    // Notify dashboard if open
+                    try 
+                    { 
+                        diagnosticsDashboard?.BeginInvoke(new Action(() => 
+                            diagnosticsDashboard?.ApplyReleaseGate(false, report.FailReasons, report.ReportPath)));
+                    }
+                    catch { /* dashboard not available */ }
+                    
+                    MessageBox.Show(
+                        $"❌ RELEASE GATE FAILED\n\n" +
+                        $"Система НЕ готова к production релизу.\n\n" +
+                        $"🚨 Нарушения SLO:\n" +
+                        $"{string.Join("\n", report.FailReasons.Select(r => $"• {r}"))}\n\n" +
+                        $"🔧 Требуются дополнительные оптимизации\n" +
+                        $"📄 Подробный отчет: {Path.GetFileName(report.ReportPath)}", 
+                        "Release Gate - FAILED", 
+                        MessageBoxButtons.OK, 
+                        MessageBoxIcon.Warning);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                LogMessage("⏹ RELEASE GATE: отменен пользователем");
+            }
+            catch (Exception ex)
+            {
+                LogMessage($"❌ RELEASE GATE: ошибка - {ex.Message}");
+                MessageBox.Show($"Ошибка Release Gate:\n{ex.Message}", "Release Gate Error", 
+                              MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
         
